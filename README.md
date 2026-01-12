@@ -1,16 +1,40 @@
-# React + Vite
+# Hawk Vision ERP - Sistema de Gestão Comercial
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Sistema completo de gestão para Varejo e Restaurantes, desenvolvido com tecnologias modernas para garantir performance, escalabilidade e experiência de usuário fluida.
 
-Currently, two official plugins are available:
+![Status](https://img.shields.io/badge/Status-Em_Desenvolvimento-yellow)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🚀 Funcionalidades Principais
 
-## React Compiler
+### 🛒 PDV (Ponto de Venda) Avançado
+- **Modo Híbrido:** Interface adaptável para Varejo (rápido) e Restaurante (gestão de mesas).
+- **Multi-pagamentos:** Suporte para pagamentos parciais e múltiplas formas (Pix, Dinheiro, Cartão) na mesma venda.
+- **Segurança:** Operações críticas (sangria, cancelamento, descontos) protegidas por PIN de gerente.
+- **KDS (Kitchen Display System):** Envio automático de pedidos para telas na cozinha/bar.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 📦 Gestão de Estoque
+- Controle de entrada e saída.
+- Ficha técnica de produtos (composição de custos).
+- Auditoria e Inventário.
 
-## Expanding the ESLint configuration
+### 🧾 Módulo Fiscal (NFC-e)
+- Integração preparada para emissão de Nota Fiscal de Consumidor Eletrônica.
+- Validação de regras fiscais (NCM, CFOP).
+- Histórico de notas com status de autorização.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### 📊 Dashboard e Financeiro
+- Relatórios de vendas e movimentações.
+- Controle de caixa (Abertura, Fechamento, Sangria, Suprimento).
+
+## 🛠️ Tecnologias Utilizadas
+
+- **Frontend:** React.js (Vite), Tailwind CSS.
+- **Backend/Database:** Supabase (PostgreSQL, Auth, Edge Functions).
+- **Ícones:** Lucide React.
+- **Notificações:** React Hot Toast.
+
+## ⚙️ Como rodar o projeto
+
+1. Clone o repositório:
+   ```bash
+   git clone [https://github.com/seu-usuario/nome-do-repo.git](https://github.com/guscatigna-web/hawk-vision)
