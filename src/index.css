@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================
+   1. SEUS COMPONENTES DE UI (PRESERVADOS)
+   ========================================= */
+@layer components {
+  /* Campos de Entrada Grandes */
+  .input-lg {
+    @apply w-full p-3 border border-slate-300 rounded-xl text-2xl font-bold outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-slate-800 placeholder:text-slate-300;
+  }
+
+  /* Campos de Entrada Padrão */
+  .input-base {
+    @apply w-full p-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-slate-700;
+  }
+
+  /* Labels */
+  .label {
+    @apply block text-xs font-bold text-slate-500 uppercase mb-1 tracking-wider;
+  }
+
+  /* Botões Primários */
+  .btn-primary {
+    @apply w-full py-3 text-white rounded-xl font-bold shadow-lg mt-2 transition-all active:scale-95 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Animações */
+  .animate-bounce-in {
+    animation: bounce-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out both;
+  }
+
+  @keyframes bounce-in {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* =========================================
+   2. SISTEMA DE IMPRESSÃO (VIA PORTAL)
+   ========================================= */
+
+/* Na tela normal, escondemos as áreas de impressão e o Portal */
+#print-portal-root,
+.printable-ticket-area,
+.kitchen-ticket-print,
+.print-a4-landscape {
+  display: none;
+}
+
+@media print {
+  
+  /* --- CONFIGURAÇÃO DA PÁGINA --- */
+  @page {
+    margin: 0;
+    size: auto;
+  }
+
+  /* --- O TRUQUE DO PORTAL (RESOLVE TELA BRANCA) --- */
+  
+  /* 1. Esconde o App React Principal (#root) */
+  #root, #root * {
+    display: none !important;
+  }
+
+  /* 2. Mostra e Posiciona o Portal (#print-portal-root) */
+  #print-portal-root {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: auto;
+    background: white;
+    z-index: 9999;
+  }
+
+  /* --- UTILITÁRIO DE QUEBRA DE PÁGINA (Importante para separar tickets) --- */
+  .page-break {
+    page-break-before: always;
+    break-before: page;
+    display: block;
+    height: 1px;
+    border-top: 1px dashed #000; /* Visual opcional para debug */
+    margin: 20px 0;
+  }
+
+  /* --- ESTILOS DOS TICKETS (DENTRO DO PORTAL) --- */
+  .printable-ticket-area,
+  .kitchen-ticket-print {
+    display: block !important;
+    width: 100%; /* Ocupa a largura do papel configurada no driver */
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    line-height: 1.2;
+    color: black !important;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Utilitários Visuais do Ticket */
+  .ticket-title {
+    text-align: center;
+    font-weight: bold;
+    font-size: 16px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+
+  .ticket-center {
+    text-align: center;
+    width: 100%;
+    display: block;
+  }
+
+  .ticket-row {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .ticket-divider {
+    border-top: 1px dashed #000;
+    margin: 5px 0;
+    width: 100%;
+    display: block;
+    height: 1px;
+  }
+
+  /* --- ESTILOS DE RELATÓRIOS A4 --- */
+  .print-a4-landscape {
+    display: block !important;
+    width: 100%;
+    padding: 10mm;
+    font-family: sans-serif;
+  }
+
+  .print-header-a4 {
+    display: block !important;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #000;
+    padding-bottom: 10px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 18px;
+  }
+
+  /* Tabelas de Relatório */
+  .print-a4-landscape table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+  }
+  
+  .print-a4-landscape th, 
+  .print-a4-landscape td {
+    border: 1px solid #9ca3af;
+    padding: 4px 8px !important;
+    color: black !important;
+  }
+
+  .print-a4-landscape thead th {
+    background-color: #e5e7eb !important;
+    font-weight: bold;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
