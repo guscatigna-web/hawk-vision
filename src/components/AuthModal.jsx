@@ -1,89 +1,108 @@
-import { useState } from 'react'
-import { Lock, Loader2, CheckCircle, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, Lock, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../contexts/AuthContext'
-import toast from 'react-hot-toast'
 
-export function AuthModal({ isOpen, onClose, onSuccess, title = "Autorização Necessária", message = "Esta ação requer aprovação de um gerente." }) {
-  const { user } = useAuth()
+export function AuthModal({ isOpen, onClose, onSuccess, title, message }) {
   const [pin, setPin] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const inputRef = useRef(null)
 
-  // Se o usuário logado JÁ É gerente, aprovamos automaticamente sem mostrar o modal?
-  // R: Geralmente sim, para agilidade. Mas se quiser rigor, pode remover este bloco.
-  if (user?.role === 'Gerente' && isOpen) {
-      onSuccess(user)
-      onClose()
-      return null
-  }
+  useEffect(() => {
+    if (isOpen) {
+      setPin('')
+      setError(null)
+      // Foca no input automaticamente ao abrir
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
-  const handleAuthorize = async (e) => {
+  const handleVerify = async (e) => {
     e.preventDefault()
-    if (!pin) return toast.error("Digite a senha")
+    if (!pin) return
 
     setLoading(true)
-    try {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('id, name')
-        .eq('role', 'Gerente')
-        .eq('access_pin', pin)
-        .eq('active', true)
-        .limit(1)
-        .single()
+    setError(null)
 
-      if (error || !data) {
-        toast.error("Senha inválida ou sem permissão")
-        setPin('')
-      } else {
-        toast.success(`Autorizado por ${data.name}`)
-        onSuccess(data) // Retorna quem autorizou
+    try {
+      // Chama a função segura no banco (RPC)
+      const { data, error: rpcError } = await supabase.rpc('verify_employee_pin', { 
+        pin_attempt: pin 
+      })
+
+      if (rpcError) throw rpcError
+
+      if (data && data.success) {
+        // Sucesso! Retorna os dados do funcionário para quem chamou
+        onSuccess(data.employee)
         onClose()
+      } else {
+        setError('PIN incorreto ou não encontrado.')
         setPin('')
       }
+
     } catch (err) {
       console.error(err)
-      toast.error("Erro de verificação")
+      setError(err.message || 'Erro ao verificar permissão.')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={24}/></button>
+    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-bounce-in">
         
-        <div className="flex justify-center mb-4">
-          <div className="bg-amber-100 p-4 rounded-full">
-            <Lock className="text-amber-600 w-10 h-10" />
+        <div className="bg-slate-900 p-6 text-center relative">
+          <div className="bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 border-4 border-slate-700 shadow-inner">
+            <Lock className="text-amber-400" size={32} />
           </div>
+          <h3 className="text-white font-bold text-lg">{title || 'Autorização Necessária'}</h3>
+          <p className="text-slate-400 text-xs mt-1">{message || 'Digite seu PIN para continuar'}</p>
+          
+          <button 
+            onClick={onClose}
+            className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
+          >
+            <X size={20}/>
+          </button>
         </div>
 
-        <h3 className="text-xl font-bold text-slate-800 mb-2">{title}</h3>
-        <p className="text-slate-500 text-sm mb-6">{message}</p>
+        <form onSubmit={handleVerify} className="p-6 bg-white">
+          <div className="mb-6">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">
+              PIN de Segurança
+            </label>
+            <input
+              ref={inputRef}
+              type="password"
+              inputMode="numeric"
+              maxLength={6}
+              value={pin}
+              onChange={(e) => {
+                setPin(e.target.value)
+                setError(null)
+              }}
+              placeholder="••••"
+              className="w-full text-center text-3xl tracking-widest font-bold p-4 border-2 border-slate-200 rounded-xl outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 text-slate-800 placeholder:text-slate-200 transition-all"
+            />
+          </div>
 
-        <form onSubmit={handleAuthorize} className="space-y-4">
-          <input 
-            type="password" 
-            autoFocus
-            inputMode="numeric"
-            placeholder="Senha (PIN)"
-            value={pin}
-            onChange={e => setPin(e.target.value)}
-            className="w-full text-center text-3xl font-bold tracking-widest p-3 border-2 border-slate-200 rounded-xl outline-none focus:border-amber-500 transition-all"
-            maxLength={6}
-          />
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg flex items-center gap-2 text-red-600 text-sm animate-shake">
+              <AlertCircle size={16} />
+              <span className="font-medium">{error}</span>
+            </div>
+          )}
 
-          <button 
+          <button
             type="submit"
-            disabled={loading || !pin}
-            className="w-full py-3 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors flex justify-center items-center gap-2"
+            disabled={loading || pin.length < 2}
+            className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-xl font-bold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-2"
           >
-            {loading ? <Loader2 className="animate-spin"/> : <CheckCircle size={20}/>}
-            Autorizar
+            {loading ? <Loader2 className="animate-spin" /> : <><ShieldCheck size={20}/> Confirmar Autorização</>}
           </button>
         </form>
       </div>

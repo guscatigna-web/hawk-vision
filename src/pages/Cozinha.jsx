@@ -6,16 +6,23 @@ import toast from 'react-hot-toast'
 export function Cozinha() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
+  const [alertTime, setAlertTime] = useState(20) // Padrão 20 min
 
   useEffect(() => {
+    // Busca configuração de tempo
+    async function fetchConfig() {
+      const { data } = await supabase.from('company_settings').select('kds_alert_time').limit(1).maybeSingle()
+      if (data?.kds_alert_time) setAlertTime(data.kds_alert_time)
+    }
+    fetchConfig()
+
     fetchOrders()
-    const interval = setInterval(fetchOrders, 5000) // Reduzi para 5s para ficar mais ágil
+    const interval = setInterval(fetchOrders, 5000)
     return () => clearInterval(interval)
   }, [])
 
   async function fetchOrders() {
     try {
-      // 1. Busca o horário de abertura do caixa mais antigo que ainda está aberto (Início do Turno)
       const { data: openSessions } = await supabase
         .from('cashier_sessions')
         .select('opening_time')
@@ -24,18 +31,14 @@ export function Cozinha() {
         .limit(1)
       
       let startTime;
-      
       if (openSessions && openSessions.length > 0) {
-        // Se tem caixa aberto, pega tudo desde a abertura desse caixa
         startTime = openSessions[0].opening_time
       } else {
-        // Se NÃO tem caixa aberto (ex: só conferência), pega as últimas 24h por segurança
         const yesterday = new Date()
         yesterday.setHours(yesterday.getHours() - 24)
         startTime = yesterday.toISOString()
       }
 
-      // 2. Busca vendas baseadas no HORÁRIO (Turno), não no ID específico
       const { data, error } = await supabase
         .from('sales')
         .select(`
@@ -48,7 +51,7 @@ export function Cozinha() {
           )
         `)
         .neq('status', 'cancelado') 
-        .gte('created_at', startTime) // Filtra pelo início do turno
+        .gte('created_at', startTime)
         .order('created_at', { ascending: true })
 
       if (error) throw error
@@ -60,7 +63,6 @@ export function Cozinha() {
     }
   }
 
-  // ATUALIZAÇÃO EM MASSA
   const updateBatchStatus = async (itemIds, newStatus) => {
       try {
         const { error } = await supabase
@@ -83,7 +85,6 @@ export function Cozinha() {
     return Math.floor((now - start) / 60000)
   }
 
-  // --- FILTRAGEM DE ITENS (Lógica Mantida) ---
   const pendingOrders = orders.map(order => {
     const validItems = order.sale_items.filter(item => 
       (item.status === 'pending') && 
@@ -113,7 +114,7 @@ export function Cozinha() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Cozinha (KDS)</h1>
-            <p className="text-sm text-slate-500">Visualização de Turno Ativo</p>
+            <p className="text-sm text-slate-500">Tempo Alerta: {alertTime} min</p>
           </div>
         </div>
         <div className="flex gap-4 text-sm font-bold">
@@ -126,10 +127,11 @@ export function Cozinha() {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-hidden">
+      {/* CORREÇÃO DE SCROLL: flex-1 min-h-0 */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-6">
         
         {/* COLUNA 1: PENDENTES */}
-        <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full">
+        <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full overflow-hidden">
           <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2 sticky top-0">
             <AlertCircle className="text-blue-600"/> Fila de Entrada
           </h2>
@@ -145,17 +147,18 @@ export function Cozinha() {
                 order={order} 
                 items={order.kitchenItems} 
                 getWaitTime={getWaitTime} 
+                alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
                 actionLabel="Iniciar Tudo" 
                 actionIcon={<Play size={18}/>} 
-                color="blue" 
+                baseColor="blue" 
               />
             ))}
           </div>
         </div>
 
         {/* COLUNA 2: EM PRODUÇÃO */}
-        <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 flex flex-col h-full">
+        <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 flex flex-col h-full overflow-hidden">
           <h2 className="text-lg font-bold text-orange-800 mb-4 flex items-center gap-2 sticky top-0">
             <Flame className="text-orange-600"/> Em Produção
           </h2>
@@ -171,10 +174,11 @@ export function Cozinha() {
                 order={order} 
                 items={order.kitchenItems} 
                 getWaitTime={getWaitTime} 
+                alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'ready')} 
                 actionLabel="Finalizar Tudo" 
                 actionIcon={<CheckCircle size={18}/>} 
-                color="orange" 
+                baseColor="orange" 
               />
             ))}
           </div>
@@ -185,29 +189,53 @@ export function Cozinha() {
   )
 }
 
-function OrderCard({ order, items, getWaitTime, onAction, actionLabel, actionIcon, color }) {
+function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
     const mins = getWaitTime(order.created_at)
-    const isLate = mins > 20
     const itemIds = items.map(i => i.id)
 
+    // LÓGICA DE CORES (GRADIENTE DE URGÊNCIA)
+    const getStatusStyle = () => {
+      const percentage = (mins / alertTime) * 100
+      
+      // Estilo Base
+      let style = { 
+        borderClass: baseColor === 'blue' ? 'border-l-blue-500' : 'border-l-orange-500', 
+        bgClass: 'bg-white', 
+        badgeClass: 'bg-slate-100 text-slate-600',
+        textClass: 'text-slate-800'
+      }
+
+      if (percentage >= 100) {
+        // CRÍTICO (Vermelho Piscante)
+        style = { borderClass: 'border-l-red-600', bgClass: 'bg-red-50 animate-pulse', badgeClass: 'bg-red-600 text-white', textClass: 'text-red-900' }
+      } else if (percentage >= 50) {
+        // ATENÇÃO (Amarelo)
+        style = { borderClass: 'border-l-yellow-500', bgClass: 'bg-yellow-50', badgeClass: 'bg-yellow-500 text-white', textClass: 'text-yellow-900' }
+      }
+
+      return style
+    }
+
+    const s = getStatusStyle()
+
     return (
-        <div className={`bg-white p-4 rounded-lg shadow-sm border-l-4 ${color === 'blue' ? 'border-l-blue-500' : 'border-l-orange-500'} animate-fade-in`}>
-            <div className="flex justify-between items-start mb-3 border-b border-slate-100 pb-2">
+        <div className={`p-4 rounded-lg shadow-sm border-l-4 ${s.borderClass} ${s.bgClass} transition-colors duration-500`}>
+            <div className="flex justify-between items-start mb-3 border-b border-black/5 pb-2">
                 <div>
-                    <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <h3 className={`text-xl font-bold flex items-center gap-2 ${s.textClass}`}>
                         {order.customer_name}
                         {order.status === 'concluido' && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded uppercase">Pago</span>}
                     </h3>
-                    <p className="text-xs text-slate-400">Pedido #{order.id.toString().slice(0,4)}</p>
+                    <p className="text-xs opacity-60">Pedido #{order.id.toString().slice(0,4)}</p>
                 </div>
-                <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs ${isLate ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
+                <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs ${s.badgeClass}`}>
                     <Clock size={12} /> {mins} min
                 </div>
             </div>
 
             <ul className="space-y-1 mb-4">
                 {items?.map((item, idx) => (
-                    <li key={idx} className="flex gap-2 text-sm text-slate-700 border-b border-slate-50 pb-1 last:border-0">
+                    <li key={idx} className={`flex gap-2 text-sm border-b border-black/5 pb-1 last:border-0 ${s.textClass}`}>
                         <span className="font-bold w-6">{item.quantity}x</span>
                         <span className="uppercase flex-1">{item.product?.name}</span>
                     </li>
@@ -216,7 +244,7 @@ function OrderCard({ order, items, getWaitTime, onAction, actionLabel, actionIco
 
             <button 
                 onClick={() => onAction(itemIds)}
-                className={`w-full py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-transform active:scale-95 ${color === 'blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
+                className={`w-full py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-transform active:scale-95 ${baseColor === 'blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
             >
                 {actionIcon} {actionLabel}
             </button>

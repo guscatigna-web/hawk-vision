@@ -34,7 +34,7 @@ export function Vendas() {
     return saved === null ? true : saved === 'true'
   })
 
-  // NOVA CONFIGURAÇÃO (Bloco 2) - Corrigido: removemos o setter não utilizado
+  // Leitura da configuração de confirmação
   const [askRelease] = useState(() => {
     const saved = localStorage.getItem('hawk_ask_table_release')
     return saved === null ? true : saved === 'true'
@@ -98,7 +98,6 @@ export function Vendas() {
       try {
         const { data: prodData } = await supabase.from('products').select('*, categories(name)').eq('type', 'sale').order('name')
         const { data: catData } = await supabase.from('categories').select('*').order('name')
-        // Busca Configuração da Empresa (para pegar a Taxa de Serviço)
         const { data: companyData } = await supabase.from('company_settings').select('*').single()
         const { data: discData } = await supabase.from('discounts_config').select('*').eq('active', true)
         
@@ -138,12 +137,10 @@ export function Vendas() {
   }, [saleIdParam, isRestaurantMode, tableNumberParam, fetchExistingSaleItems])
 
 
-  // --- CÁLCULOS TOTAIS (AGORA DINÂMICO) ---
+  // --- CÁLCULOS TOTAIS ---
   const cartTotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0)
-  // O subtotal agora é sempre a soma do que está no banco + o que está no carrinho
   const subtotalRaw = existingTotal + cartTotal
   
-  // LÊ DO BANCO OU USA 10%
   const serviceFeeRate = (companyInfo?.service_fee || 10) / 100
   const serviceFeeValue = (isRestaurantMode && includeServiceFee) ? subtotalRaw * serviceFeeRate : 0
   
@@ -282,7 +279,6 @@ export function Vendas() {
     try {
         let activeId = currentSaleId
 
-        // Se for Varejo e não tiver venda criada, cria agora
         if (!activeId) {
             const { data: newSale, error } = await supabase.from('sales').insert({
                 employee_id: user.id, 
@@ -296,9 +292,7 @@ export function Vendas() {
             activeId = newSale.id
             setCurrentSaleId(newSale.id)
 
-            // Salva itens do carrinho se houver
             if (cart.length > 0) {
-                // Se KDS ativo, itens nascem como 'pending'.
                 const initialStatus = useKDS ? 'pending' : 'delivered' 
                 const itemsToInsert = cart.map(item => ({ 
                     sale_id: activeId, 
@@ -312,14 +306,12 @@ export function Vendas() {
             }
         }
 
-        // Salva o Pagamento
         await supabase.from('sale_payments').insert({
             sale_id: activeId,
             payment_method: method,
             amount: parseFloat(amount)
         })
 
-        // Atualiza Caixa
         await addTransaction('venda', parseFloat(amount), `Parcial Venda #${activeId}`, method)
 
         toast.success(`Pagamento de R$ ${amount} registrado!`)
@@ -348,12 +340,13 @@ export function Vendas() {
       }
   }
 
-  // --- FINALIZAÇÃO DE VENDA (INTELIGENTE) ---
+  // --- FINALIZAÇÃO DE VENDA (INTELIGENTE - CORREÇÃO 3.1) ---
   const handleFinishSale = async () => {
     if (remainingDue > 0.01) return toast.error(`Ainda faltam R$ ${remainingDue.toFixed(2)}`)
     
-    // VERIFICAÇÃO DE "PAGAMENTO ANTECIPADO"
-    const hasPendingKitchenItems = existingItems.some(item => ['pending', 'preparing', 'ready'].includes(item.status))
+    // CORREÇÃO AQUI: Removemos 'ready' da lista. Se já está pronto, não trava.
+    // Só trava se estiver 'pending' (fila) ou 'preparing' (fogo).
+    const hasPendingKitchenItems = existingItems.some(item => ['pending', 'preparing'].includes(item.status))
     let shouldDeliverKitchen = autoDeliver 
 
     if (autoDeliver && hasPendingKitchenItems && askRelease) {
@@ -366,7 +359,7 @@ export function Vendas() {
         
         if (!isStandardFlow) {
             shouldDeliverKitchen = false
-            toast("Pagamento antecipado. Pedido mantido na cozinha.", { icon: '👨‍🍳' })
+            toast("Pagamento antecipado registrado. Itens mantidos na cozinha.", { icon: '👨‍🍳' })
         }
     }
 
@@ -374,7 +367,6 @@ export function Vendas() {
     const toastId = toast.loading("Finalizando...")
 
     try {
-      // 1. ATUALIZA A VENDA
       await supabase.from('sales').update({
         status: 'concluido',
         total: grandTotalFinal,
@@ -386,17 +378,14 @@ export function Vendas() {
         payment_method: payments.length === 1 ? payments[0].payment_method : 'multiplo'
       }).eq('id', currentSaleId)
 
-      // 2. ATUALIZA O ESTOQUE
       await deductStock([...existingItems, ...cart])
 
-      // 3. ATUALIZA COZINHA (Baseado na decisão acima)
       if (shouldDeliverKitchen) {
           await supabase.from('sale_items')
             .update({ status: 'delivered' })
             .eq('sale_id', currentSaleId)
       }
 
-      // 4. FISCAL
       let fiscalData = { status: 'pendente', pdf: null }
       try {
          const result = await FiscalService.emitirNFCe(currentSaleId)
@@ -544,14 +533,14 @@ export function Vendas() {
                     {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS' : 'Print'}
                 </button>
 
-                {/* BOTÃO FLUXO: MODO RESTAURANTE vs MODO FAST-FOOD */}
+                {/* BOTÃO FLUXO RESTAURADO: MODO RESTAURANTE vs MODO FAST-FOOD */}
                 <button 
                     onClick={toggleAutoDeliver} 
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${autoDeliver ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}
                     title={autoDeliver ? "Fluxo Restaurante: Pagamento encerra pedido" : "Fluxo Fast-Food: Pagamento mantém pedido na tela"}
                 >
                     {autoDeliver ? <Utensils size={14}/> : <Zap size={14}/>} 
-                    {autoDeliver ? 'Modo Restaurante' : 'Modo Fast-Food'}
+                    {autoDeliver ? 'Restaurante' : 'Fast-Food'}
                 </button>
             </div>
           </div>
@@ -708,19 +697,16 @@ export function Vendas() {
                     <FileText size={20} />
                  </button>
 
-                 {/* BOTÃO ENVIAR (SÓ APARECE SE NÃO FOR FAST-FOOD) */}
-                 {autoDeliver && (
-                   <button 
-                      onClick={handleSendOrder}
-                      disabled={isProcessing || cart.length === 0}
-                      className={`flex-1 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${useKDS ? 'bg-amber-500 hover:bg-amber-600' : 'bg-slate-700 hover:bg-slate-800'}`}
-                   >
-                      <div className="flex items-center text-sm">
-                          {useKDS ? <ChefHat size={16} className="mr-1"/> : <Printer size={16} className="mr-1"/>} 
-                          {useKDS ? 'Enviar' : 'Imprimir'}
-                      </div>
-                   </button>
-                 )}
+                 <button 
+                    onClick={handleSendOrder}
+                    disabled={isProcessing || cart.length === 0}
+                    className={`flex-1 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${useKDS ? 'bg-amber-500 hover:bg-amber-600' : 'bg-slate-700 hover:bg-slate-800'}`}
+                 >
+                    <div className="flex items-center text-sm">
+                        {useKDS ? <ChefHat size={16} className="mr-1"/> : <Printer size={16} className="mr-1"/>} 
+                        {useKDS ? 'Enviar' : 'Imprimir'}
+                    </div>
+                 </button>
               </div>
             )}
           </div>

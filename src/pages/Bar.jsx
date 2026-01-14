@@ -6,8 +6,16 @@ import toast from 'react-hot-toast'
 export function Bar() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
+  const [alertTime, setAlertTime] = useState(20) // Padrão 20 min
 
   useEffect(() => {
+    // Busca config de tempo
+    async function fetchConfig() {
+      const { data } = await supabase.from('company_settings').select('kds_alert_time').limit(1).maybeSingle()
+      if (data?.kds_alert_time) setAlertTime(data.kds_alert_time)
+    }
+    fetchConfig()
+
     fetchOrders()
     const interval = setInterval(fetchOrders, 5000) 
     return () => clearInterval(interval)
@@ -15,7 +23,6 @@ export function Bar() {
 
   async function fetchOrders() {
     try {
-      // 1. Busca início do turno (Menor horário de abertura ativo)
       const { data: openSessions } = await supabase
         .from('cashier_sessions')
         .select('opening_time')
@@ -32,7 +39,6 @@ export function Bar() {
         startTime = yesterday.toISOString()
       }
 
-      // 2. Busca vendas do Turno
       const { data, error } = await supabase
         .from('sales')
         .select(`
@@ -45,7 +51,7 @@ export function Bar() {
           )
         `)
         .neq('status', 'cancelado') 
-        .gte('created_at', startTime) // Filtro por Turno
+        .gte('created_at', startTime) 
         .order('created_at', { ascending: true })
 
       if (error) throw error
@@ -57,7 +63,6 @@ export function Bar() {
     }
   }
 
-  // ATUALIZAÇÃO EM MASSA
   const updateBatchStatus = async (itemIds, newStatus) => {
     try {
       const { error } = await supabase
@@ -80,7 +85,6 @@ export function Bar() {
     return Math.floor((now - start) / 60000)
   }
 
-  // --- FILTRAGEM INTELIGENTE ---
   const pendingOrders = orders.map(order => {
     const validItems = order.sale_items.filter(item => 
       (item.status === 'pending') && 
@@ -109,7 +113,7 @@ export function Bar() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-800">KDS Bar / Copa</h1>
-            <p className="text-sm text-slate-500">Visualização de Turno Ativo</p>
+            <p className="text-sm text-slate-500">Tempo Alerta: {alertTime} min</p>
           </div>
         </div>
         <div className="flex gap-4 text-sm font-bold">
@@ -122,8 +126,9 @@ export function Bar() {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-hidden">
-        <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full">
+      {/* SCROLL FIX: min-h-0 */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full overflow-hidden">
           <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2 sticky top-0">
             <AlertCircle className="text-blue-600"/> Fila de Entrada
           </h2>
@@ -139,16 +144,17 @@ export function Bar() {
                 order={order} 
                 items={order.barItems} 
                 getWaitTime={getWaitTime} 
+                alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
                 actionLabel="Preparar" 
                 actionIcon={<Play size={18}/>} 
-                color="blue" 
+                baseColor="blue" 
               />
             ))}
           </div>
         </div>
 
-        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col h-full">
+        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col h-full overflow-hidden">
           <h2 className="text-lg font-bold text-purple-800 mb-4 flex items-center gap-2 sticky top-0">
             <Beer className="text-purple-600"/> Preparando
           </h2>
@@ -164,10 +170,11 @@ export function Bar() {
                 order={order} 
                 items={order.barItems} 
                 getWaitTime={getWaitTime} 
+                alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'ready')} 
                 actionLabel="Pronto" 
                 actionIcon={<CheckCircle size={18}/>} 
-                color="purple" 
+                baseColor="purple" 
               />
             ))}
           </div>
@@ -177,32 +184,53 @@ export function Bar() {
   )
 }
 
-function BarOrderCard({ order, items, getWaitTime, onAction, actionLabel, actionIcon, color }) {
+function BarOrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
     const mins = getWaitTime(order.created_at)
-    const btnColor = color === 'blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
-    const border = color === 'blue' ? 'border-l-blue-500' : 'border-l-purple-500'
     const itemIds = items.map(i => i.id)
 
+    // LÓGICA DE CORES (GRADIENTE DE URGÊNCIA)
+    const getStatusStyle = () => {
+      const percentage = (mins / alertTime) * 100
+      
+      let style = { 
+        borderClass: baseColor === 'blue' ? 'border-l-blue-500' : 'border-l-purple-500', 
+        bgClass: 'bg-white', 
+        badgeClass: 'bg-slate-100 text-slate-600',
+        textClass: 'text-slate-800'
+      }
+
+      if (percentage >= 100) {
+        style = { borderClass: 'border-l-red-600', bgClass: 'bg-red-50 animate-pulse', badgeClass: 'bg-red-600 text-white', textClass: 'text-red-900' }
+      } else if (percentage >= 50) {
+        style = { borderClass: 'border-l-yellow-500', bgClass: 'bg-yellow-50', badgeClass: 'bg-yellow-500 text-white', textClass: 'text-yellow-900' }
+      }
+
+      return style
+    }
+
+    const s = getStatusStyle()
+    const btnColor = baseColor === 'blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
+
     return (
-        <div className={`bg-white p-4 rounded-lg shadow-sm border-l-4 ${border} animate-fade-in`}>
-            <div className="flex justify-between items-start mb-3 border-b border-slate-100 pb-2">
+        <div className={`p-4 rounded-lg shadow-sm border-l-4 ${s.borderClass} ${s.bgClass} transition-colors duration-500`}>
+            <div className="flex justify-between items-start mb-3 border-b border-black/5 pb-2">
                 <div>
-                    <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <h3 className={`text-xl font-bold flex items-center gap-2 ${s.textClass}`}>
                       {order.customer_name}
                       {order.status === 'concluido' && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded uppercase">Pago</span>}
                     </h3>
-                    <p className="text-xs text-slate-400">Pedido #{order.id.toString().slice(0,4)}</p>
+                    <p className="text-xs opacity-60">Pedido #{order.id.toString().slice(0,4)}</p>
                 </div>
-                <div className="flex items-center gap-1 font-bold px-2 py-1 rounded text-xs bg-slate-100 text-slate-600">
+                <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs ${s.badgeClass}`}>
                     <Clock size={12} /> {mins} min
                 </div>
             </div>
 
             <ul className="space-y-2 mb-4">
                 {items.map((item, idx) => (
-                    <li key={idx} className="flex justify-between text-sm text-slate-700 border-b border-slate-50 pb-1 last:border-0">
+                    <li key={idx} className={`flex justify-between text-sm border-b border-black/5 pb-1 last:border-0 ${s.textClass}`}>
                         <span className="uppercase font-medium">{item.product?.name}</span>
-                        <span className="font-bold bg-slate-100 px-2 rounded">{item.quantity}</span>
+                        <span className="font-bold bg-black/5 px-2 rounded">{item.quantity}</span>
                     </li>
                 ))}
             </ul>

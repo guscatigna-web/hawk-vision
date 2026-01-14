@@ -250,8 +250,9 @@ export function CashierControl() {
                         <p className={`font-bold text-sm ${sale.status === 'cancelado' ? 'text-red-800 line-through' : 'text-slate-700'}`}>
                           {sale.customer_name || 'Varejo'}
                         </p>
+                        {/* CORREÇÃO AQUI: Proteção contra null no payment_method */}
                         <p className="text-xs text-slate-400">
-                          {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • {sale.payment_method.toUpperCase()}
+                          {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • {(sale.payment_method || 'PENDENTE').toUpperCase()}
                         </p>
                         {sale.status === 'cancelado' && <span className="text-[10px] text-red-600 font-bold uppercase">Cancelado</span>}
                       </div>

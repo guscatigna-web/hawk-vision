@@ -6,78 +6,140 @@ import toast from 'react-hot-toast';
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null); // Dados do Supabase Auth (email, id, etc)
+  const [employee, setEmployee] = useState(null); // Dados de negócio (nome, cargo, company_id)
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function loadUserFromStorage() {
-      try {
-        const storedUser = localStorage.getItem('hawk_user');
-        
-        if (storedUser) {
-          const parsedUser = JSON.parse(storedUser);
-          setUser(parsedUser);
-
-          // VERIFICAÇÃO DE SEGURANÇA EXTRA:
-          // Confere silenciosamente no banco se esse usuário ainda existe e está 'Ativo'.
-          const { data, error } = await supabase
-            .from('employees')
-            .select('status')
-            .eq('id', parsedUser.id)
-            .single();
-
-          if (error || !data || data.status !== 'Ativo') {
-             // Se foi demitido ou bloqueado, força o logout
-             signOut();
-          }
-        }
-      } catch (error) {
-        console.error("Erro ao restaurar sessão:", error);
-        localStorage.removeItem('hawk_user');
-      } finally {
-        // Só libera o App para renderizar depois de checar o storage
+    // 1. Verifica sessão ativa ao abrir o app
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchEmployeeProfile(session.user);
+      } else {
         setLoading(false);
       }
-    }
+    });
 
-    loadUserFromStorage();
+    // 2. Escuta mudanças de estado (Login/Logout em outras abas ou expiração)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        fetchEmployeeProfile(session.user);
+      } else {
+        setEmployee(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  async function signIn(email, password) {
+  // --- BUSCA PERFIL DE NEGÓCIO (Com Vínculo Automático) ---
+  async function fetchEmployeeProfile(authUser) {
     try {
-      // Busca usuário
-      const { data, error } = await supabase
+      // Tenta buscar pelo ID de autenticação já vinculado
+      let { data, error } = await supabase
         .from('employees')
         .select('*')
-        .eq('email', email)
-        .eq('password', password)
-        .eq('status', 'Ativo')
-        .single();
+        .eq('auth_user_id', authUser.id)
+        .maybeSingle();
 
-      if (error || !data) throw new Error("Acesso negado.");
+      // MIGRACAO AUTOMÁTICA:
+      // Se não achou pelo ID, mas o email bate, vamos vincular agora!
+      if (!data && authUser.email) {
+        const { data: emailMatch } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('email', authUser.email)
+          .maybeSingle();
 
-      // SEGURANÇA: Remove a senha do objeto antes de salvar no navegador
-      // A linha de disable foi removida pois causava o erro relatado
-      const { password: _, ...safeUser } = data;
+        if (emailMatch) {
+          // Atualiza o registro do funcionário com o ID do Supabase Auth
+          const { data: updated, error: updateError } = await supabase
+            .from('employees')
+            .update({ auth_user_id: authUser.id })
+            .eq('id', emailMatch.id)
+            .select()
+            .single();
+          
+          if (!updateError) {
+            data = updated;
+            console.log("Vínculo de usuário realizado com sucesso para:", authUser.email);
+          }
+        }
+      }
 
-      setUser(safeUser);
-      localStorage.setItem('hawk_user', JSON.stringify(safeUser));
+      if (error && error.code !== 'PGRST116') throw error;
+
+      if (!data) {
+        // Logou no Supabase, mas não é um funcionário cadastrado
+        console.error("Usuário sem cadastro de funcionário correspondente.");
+        await supabase.auth.signOut();
+        toast.error("Usuário não vinculado a um funcionário.");
+        return;
+      }
+
+      if (data.status !== 'Ativo') {
+        await supabase.auth.signOut();
+        toast.error("Acesso revogado.");
+        return;
+      }
+
+      setEmployee(data);
+    
+    } catch (error) {
+      console.error("Erro ao carregar perfil:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // --- LOGIN ---
+  async function signIn(email, password) {
+    try {
+      setLoading(true);
       
-      toast.success(`Bem-vindo, ${safeUser.name}!`);
-      return safeUser;
+      // 1. Autentica no Supabase Auth
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      // 2. O useEffect vai disparar o fetchEmployeeProfile automaticamente
+      // Mas retornamos sucesso aqui para a UI
+      toast.success("Login realizado!");
+      return data;
 
     } catch (error) {
       console.error(error);
       toast.error("Email ou senha incorretos.");
+      setLoading(false);
       return null;
     }
   }
 
-  function signOut() {
-    setUser(null);
-    localStorage.removeItem('hawk_user');
-    toast.success("Saiu do sistema.");
+  // --- LOGOUT ---
+  async function signOut() {
+    try {
+      await supabase.auth.signOut();
+      setEmployee(null);
+      setUser(null);
+      setSession(null);
+      toast.success("Saiu do sistema.");
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+    }
   }
+
+  // O "user" exportado agora combina dados de Auth + Dados de Funcionário para compatibilidade
+  const combinedUser = employee ? { ...employee, auth_id: user?.id } : null;
 
   if (loading) {
     return (
@@ -88,7 +150,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, signIn, signOut, loading }}>
+    <AuthContext.Provider value={{ user: combinedUser, signIn, signOut, loading, session }}>
       {children}
     </AuthContext.Provider>
   );
