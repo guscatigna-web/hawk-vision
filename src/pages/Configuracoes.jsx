@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, Building2, FileText, Loader2, MapPin, Printer, Monitor, ChevronRight, ArrowLeft, Package, Trash2, Plus, Pencil, X, AlertTriangle, CreditCard, DollarSign, Percent, Lock, Server, Tag, MessageSquare } from 'lucide-react'
+import { Save, Building2, FileText, Loader2, MapPin, Printer, Monitor, ChevronRight, ArrowLeft, Package, Trash2, Plus, Pencil, X, AlertTriangle, CreditCard, DollarSign, Percent, Lock, Server, Tag, MessageSquare, CloudLightning, CheckCircle2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 
@@ -12,13 +12,14 @@ export function Configuracoes() {
       {currentView === 'menu' && (
         <div>
           <h2 className="text-2xl font-bold text-slate-800 mb-2">Configurações</h2>
-          <p className="text-sm text-slate-500">Gerencie os dados da empresa, estoque, financeiro e sistema.</p>
+          <p className="text-sm text-slate-500">Gerencie os dados da empresa, estoque, financeiro, delivery e sistema.</p>
         </div>
       )}
 
       {currentView === 'menu' && <SettingsMenu onSelect={setCurrentView} />}
       
       {currentView === 'empresa' && <CompanySettings onBack={() => setCurrentView('menu')} />}
+      {currentView === 'integracoes' && <IntegrationsSettings onBack={() => setCurrentView('menu')} />}
       {currentView === 'fiscal_emissao' && <FiscalConfig onBack={() => setCurrentView('menu')} />}
       {currentView === 'impressao' && <PrinterSettings onBack={() => setCurrentView('menu')} />}
       {currentView === 'estoque' && <StockSettings onBack={() => setCurrentView('menu')} />}
@@ -38,6 +39,14 @@ function SettingsMenu({ onSelect }) {
         title="Dados da Empresa" 
         desc="CNPJ, IE, Endereço e Dados Fiscais."
         onClick={() => onSelect('empresa')}
+      />
+
+      <MenuCard 
+        icon={<CloudLightning size={24}/>} 
+        bg="bg-red-50" color="text-red-600"
+        title="iFood & Delivery" 
+        desc="Conexão, chaves de API e Aceite Automático."
+        onClick={() => onSelect('integracoes')}
       />
 
       <MenuCard 
@@ -90,6 +99,177 @@ function MenuCard({ icon, bg, color, title, desc, onClick }) {
     </button>
   )
 }
+
+// --- INTEGRAÇÕES (ATUALIZADO COM AUTO_PRINT) ---
+function IntegrationsSettings({ onBack }) {
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [config, setConfig] = useState({
+      id: null,
+      merchant_id: '',
+      client_id: '',
+      client_secret: '',
+      auto_accept: false,
+      auto_print: true, // Campo novo
+      status: 'Inativo'
+    })
+  
+    useEffect(() => {
+      async function fetchConfig() {
+        try {
+          const { data, error } = await supabase.from('integrations_ifood').select('*').limit(1).single()
+          // Ignora erro se for apenas "row not found"
+          if (error && error.code !== 'PGRST116') throw error
+          if (data) setConfig(data)
+        } catch (error) { 
+            console.log('Configuração não encontrada (será criada ao salvar). Detalhe:', error)
+        } finally { 
+            setLoading(false) 
+        }
+      }
+      fetchConfig()
+    }, [])
+  
+    async function handleSave(e) {
+      e.preventDefault()
+      setSaving(true)
+      try {
+        const { error } = await supabase.from('integrations_ifood').upsert({
+          id: config.id, 
+          merchant_id: config.merchant_id,
+          client_id: config.client_id,
+          client_secret: config.client_secret,
+          auto_accept: config.auto_accept,
+          auto_print: config.auto_print,
+          status: config.merchant_id ? 'Ativo' : 'Inativo',
+          updated_at: new Date()
+        })
+  
+        if (error) throw error
+        toast.success('Configuração de integração salva!')
+      } catch (error) {
+        console.error(error)
+        toast.error('Erro ao salvar configuração')
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    const toggleAutoAccept = () => setConfig(prev => ({ ...prev, auto_accept: !prev.auto_accept }))
+    const toggleAutoPrint = () => setConfig(prev => ({ ...prev, auto_print: !prev.auto_print }))
+  
+    if (loading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin text-blue-600"/></div>
+  
+    return (
+      <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"><ArrowLeft size={24} /></button>
+          <div><h2 className="text-xl font-bold text-slate-800">Integração iFood</h2><p className="text-sm text-slate-500">Gerencie a conexão e comportamento dos pedidos delivery.</p></div>
+        </div>
+  
+        <form onSubmit={handleSave} className="space-y-6">
+          
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 space-y-6">
+             
+             {/* TOGGLE 1: ACEITE AUTOMÁTICO */}
+             <div className="flex items-center justify-between pb-6 border-b border-slate-50">
+                <div className="flex items-start gap-4">
+                    <div className={`p-3 rounded-lg ${config.auto_accept ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {config.auto_accept ? <CheckCircle2 size={24} /> : <MessageSquare size={24} />}
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-slate-800">Aceite Automático (KDS)</h3>
+                        <p className="text-sm text-slate-500 max-w-md mt-1">
+                            {config.auto_accept 
+                                ? "LIGADO: Pedidos vão direto para a tela da Cozinha (Em Preparo)."
+                                : "DESLIGADO: Pedidos aguardam aprovação manual do Gerente."
+                            }
+                        </p>
+                    </div>
+                </div>
+                <button type="button" onClick={toggleAutoAccept} className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${config.auto_accept ? 'bg-green-500' : 'bg-slate-300'}`}>
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${config.auto_accept ? 'translate-x-7' : 'translate-x-1'}`} />
+                </button>
+             </div>
+
+             {/* TOGGLE 2: IMPRESSÃO AUTOMÁTICA */}
+             <div className="flex items-center justify-between">
+                <div className="flex items-start gap-4">
+                    <div className={`p-3 rounded-lg ${config.auto_print ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                        <Printer size={24} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-slate-800">Imprimir Via de Expedição</h3>
+                        <p className="text-sm text-slate-500 max-w-md mt-1">
+                            Gera automaticamente a comanda física para conferência e grampo na sacola, mesmo usando KDS.
+                        </p>
+                    </div>
+                </div>
+                <button type="button" onClick={toggleAutoPrint} className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${config.auto_print ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${config.auto_print ? 'translate-x-7' : 'translate-x-1'}`} />
+                </button>
+             </div>
+
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <h3 className="font-bold text-slate-800 mb-4 flex items-center border-b border-slate-50 pb-2">
+              <CloudLightning className="mr-2 text-red-600" size={20} /> Credenciais da API (Sandbox/Produção)
+            </h3>
+            
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="label">Merchant ID (ID da Loja)</label>
+                <input 
+                  className="input-base font-mono" 
+                  placeholder="Ex: 3540132" 
+                  value={config.merchant_id || ''} 
+                  onChange={e => setConfig({...config, merchant_id: e.target.value})}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Este ID identifica sua loja dentro do iFood.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label className="label">Client ID</label>
+                    <input 
+                        className="input-base font-mono text-xs" 
+                        placeholder="Client ID do Portal do Desenvolvedor" 
+                        value={config.client_id || ''} 
+                        onChange={e => setConfig({...config, client_id: e.target.value})}
+                        type="password"
+                    />
+                </div>
+                <div>
+                    <label className="label">Client Secret</label>
+                    <input 
+                        className="input-base font-mono text-xs" 
+                        placeholder="Client Secret do Portal do Desenvolvedor" 
+                        value={config.client_secret || ''} 
+                        onChange={e => setConfig({...config, client_secret: e.target.value})}
+                        type="password"
+                    />
+                </div>
+              </div>
+
+              <div className="bg-amber-50 p-3 rounded-lg border border-amber-100 flex gap-2 items-start mt-2">
+                 <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0"/>
+                 <p className="text-xs text-amber-800">
+                    O iFood não fornece dados reais em Sandbox sem homologação. Enquanto aguarda, use o botão "Simular iFood" na tela principal para testar o fluxo com as configurações acima.
+                 </p>
+              </div>
+            </div>
+          </div>
+  
+          <div className="flex justify-end">
+            <button type="submit" disabled={saving} className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-lg font-bold flex items-center shadow-lg transition-all">
+              {saving ? <Loader2 className="animate-spin mr-2"/> : <Save className="mr-2"/>} Salvar Integração
+            </button>
+          </div>
+        </form>
+      </div>
+    )
+  }
 
 function FiscalConfig({ onBack }) {
   const [loading, setLoading] = useState(true)
@@ -351,7 +531,6 @@ function CompanySettings({ onBack }) {
 function PrinterSettings({ onBack }) {
   const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
   
-  // NOVA CONFIGURAÇÃO (Bloco 2)
   const [askRelease, setAskRelease] = useState(() => {
     const saved = localStorage.getItem('hawk_ask_table_release')
     return saved === null ? true : saved === 'true'
@@ -397,7 +576,6 @@ function PrinterSettings({ onBack }) {
         </button>
       </div>
 
-      {/* NOVA SEÇÃO: CONTROLE DE FLUXO */}
       <div className="border-t border-slate-200 pt-6">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Fluxo de Operação</h3>
         <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">

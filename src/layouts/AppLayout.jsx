@@ -4,6 +4,8 @@ import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat,
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
+// --- NOVO: Import do Simulador ---
+import { IfoodSimulator } from '../components/IfoodSimulator'
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
@@ -101,7 +103,7 @@ export function AppLayout() {
             </>
           )}
 
-          {/* --- CONFIGURAÇÕES (AGORA INCLUI FINANCEIRO) --- */}
+          {/* --- CONFIGURAÇÕES --- */}
           {isManager && (
             <div className="pt-4 mt-4 border-t border-slate-800">
                <NavItem to="/configuracoes" icon={<Settings size={20}/>} label="Configurações" />
@@ -116,10 +118,14 @@ export function AppLayout() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto bg-slate-50 print:bg-white">
+      <main className="flex-1 overflow-auto bg-slate-50 print:bg-white relative">
         <div className="p-8 print:p-0">
           <Outlet />
         </div>
+
+        {/* --- SIMULADOR DE IFOOD (FLUTUANTE) --- */}
+        <IfoodSimulator />
+        
       </main>
     </div>
   )

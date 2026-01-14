@@ -60,6 +60,9 @@ export function Vendas() {
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [lastSaleData, setLastSaleData] = useState(null) 
   const [companyInfo, setCompanyInfo] = useState(null)
+  
+  // --- ESTADO PARA MULTI-TENANT (CORREÇÃO DO ERRO 403) ---
+  const [companyId, setCompanyId] = useState(null)
 
   // --- CONTROLE DE AUTORIZAÇÃO ---
   const [authModalOpen, setAuthModalOpen] = useState(false)
@@ -96,6 +99,16 @@ export function Vendas() {
   useEffect(() => {
     async function fetchData() {
       try {
+        // 1. Busca Company ID do usuário logado (CRUCIAL PARA O FIX)
+        if (user?.email) {
+            const { data: empData } = await supabase
+                .from('employees')
+                .select('company_id')
+                .eq('email', user.email)
+                .single()
+            if (empData) setCompanyId(empData.company_id)
+        }
+
         const { data: prodData } = await supabase.from('products').select('*, categories(name)').eq('type', 'sale').order('name')
         const { data: catData } = await supabase.from('categories').select('*').order('name')
         const { data: companyData } = await supabase.from('company_settings').select('*').single()
@@ -108,7 +121,7 @@ export function Vendas() {
       } catch (error) { console.error(error) } finally { setLoading(false) }
     }
     fetchData()
-  }, [])
+  }, [user])
 
   const fetchPayments = useCallback(async (saleId) => {
     if (!saleId) {
@@ -226,22 +239,24 @@ export function Vendas() {
     handlePrint('prebill', data)
   }
 
-  // --- KDS ---
+  // --- KDS (CORRIGIDO COM COMPANY_ID) ---
   const handleSendOrder = async () => {
     if (cart.length === 0) return toast.error("Carrinho vazio!")
     if (!currentSession) return toast.error("Abra o caixa antes de lançar!") 
+    if (!companyId) return toast.error("Erro de Empresa. Recarregue a página.")
 
     setIsProcessing(true)
     try {
       let activeId = currentSaleId
       if (!activeId) {
         const { data: newSale, error } = await supabase.from('sales').insert({
+            company_id: companyId, // <--- FIX 403
             employee_id: user.id, 
             customer_name: customerName || 'Balcão', 
             table_number: tableNumberParam ? parseInt(tableNumberParam) : null, 
             status: 'aberto', 
             total: 0,
-            cashier_session_id: currentSession.id // VINCULA AO CAIXA
+            cashier_session_id: currentSession.id
           }).select().single()
         
         if (error) throw error
@@ -251,9 +266,19 @@ export function Vendas() {
 
       const initialStatus = useKDS ? 'pending' : 'delivered' 
       const itemsToInsert = cart.map(item => ({
-        sale_id: activeId, product_id: item.product.id, quantity: item.quantity, unit_price: item.product.price, status: initialStatus
+        company_id: companyId, // <--- FIX 403
+        sale_id: activeId, 
+        product_id: item.product.id, 
+        product_name: item.product.name, // GARANTINDO O NOME
+        quantity: item.quantity, 
+        unit_price: item.product.price, 
+        total: item.quantity * item.product.price,
+        status: initialStatus
       }))
-      await supabase.from('sale_items').insert(itemsToInsert)
+
+      const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert)
+      if (itemsError) throw itemsError
+
       await supabase.from('sales').update({ total: subtotalRaw, status: 'aberto' }).eq('id', activeId)
       
       if (useKDS) toast.success("Enviado para KDS!")
@@ -269,18 +294,21 @@ export function Vendas() {
       }
       setCart([]) 
       fetchExistingSaleItems(activeId) 
-    } catch (error) { console.error(error); toast.error("Erro ao enviar.") } finally { setIsProcessing(false) }
+    } catch (error) { console.error(error); toast.error("Erro ao enviar: " + error.message) } finally { setIsProcessing(false) }
   }
 
-  // --- LÓGICA DE PAGAMENTO PERSISTENTE ---
+  // --- LÓGICA DE PAGAMENTO PERSISTENTE (CORRIGIDO COM COMPANY_ID) ---
   const handleAddPayment = async (method, amount) => {
     if (!currentSession) return toast.error("Caixa Fechado.")
+    if (!companyId) return toast.error("Erro de identificação da empresa.")
+
     setIsProcessing(true)
     try {
         let activeId = currentSaleId
 
         if (!activeId) {
             const { data: newSale, error } = await supabase.from('sales').insert({
+                company_id: companyId, // <--- FIX 403
                 employee_id: user.id, 
                 customer_name: customerName || 'Varejo', 
                 status: 'aberto', 
@@ -295,10 +323,13 @@ export function Vendas() {
             if (cart.length > 0) {
                 const initialStatus = useKDS ? 'pending' : 'delivered' 
                 const itemsToInsert = cart.map(item => ({ 
+                    company_id: companyId, // <--- FIX 403
                     sale_id: activeId, 
                     product_id: item.product.id, 
+                    product_name: item.product.name,
                     quantity: item.quantity, 
-                    unit_price: item.product.price, 
+                    unit_price: item.product.price,
+                    total: item.quantity * item.product.price, 
                     status: initialStatus 
                 }))
                 await supabase.from('sale_items').insert(itemsToInsert)
@@ -307,6 +338,7 @@ export function Vendas() {
         }
 
         await supabase.from('sale_payments').insert({
+            company_id: companyId, // <--- FIX 403
             sale_id: activeId,
             payment_method: method,
             amount: parseFloat(amount)
@@ -340,12 +372,10 @@ export function Vendas() {
       }
   }
 
-  // --- FINALIZAÇÃO DE VENDA (INTELIGENTE - CORREÇÃO 3.1) ---
+  // --- FINALIZAÇÃO DE VENDA ---
   const handleFinishSale = async () => {
     if (remainingDue > 0.01) return toast.error(`Ainda faltam R$ ${remainingDue.toFixed(2)}`)
     
-    // CORREÇÃO AQUI: Removemos 'ready' da lista. Se já está pronto, não trava.
-    // Só trava se estiver 'pending' (fila) ou 'preparing' (fogo).
     const hasPendingKitchenItems = existingItems.some(item => ['pending', 'preparing'].includes(item.status))
     let shouldDeliverKitchen = autoDeliver 
 
