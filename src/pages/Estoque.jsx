@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Package, AlertTriangle, Plus, Loader2, Trash2, ClipboardList, Pencil, ArrowRightLeft, ChefHat, MoreHorizontal, Search, Printer, FileSpreadsheet } from 'lucide-react' 
+import { Package, AlertTriangle, Plus, Loader2, Trash2, ClipboardList, Pencil, ArrowRightLeft, ChefHat, MoreHorizontal, Search, Printer, FileSpreadsheet, RefreshCw } from 'lucide-react' 
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext' 
 import { NewProductModal } from '../components/NewProductModal'
@@ -7,7 +7,7 @@ import { RecipeModal } from '../components/RecipeModal'
 import { StockAdjustmentModal } from '../components/StockAdjustmentModal'
 import { ProductionModal } from '../components/ProductionModal'
 import { exportToCSV } from '../utils/excelUtils'
-import { PrintPortal } from '../components/Receipts' // IMPORT NECESSÁRIO
+import { PrintPortal } from '../components/Receipts' 
 import toast from 'react-hot-toast'
 
 export function Estoque() {
@@ -17,9 +17,8 @@ export function Estoque() {
   const [products, setProducts] = useState([])
   const [stockCategories, setStockCategories] = useState([]) 
   const [loading, setLoading] = useState(true)
-  const [isPrinting, setIsPrinting] = useState(false) // ESTADO DE IMPRESSÃO
+  const [isPrinting, setIsPrinting] = useState(false) 
   
-  // Controle de Menus e Modais
   const [menuOpenId, setMenuOpenId] = useState(null)
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [productToEdit, setProductToEdit] = useState(null)
@@ -28,7 +27,6 @@ export function Estoque() {
   const [selectedProductForAdjustment, setSelectedProductForAdjustment] = useState(null) 
   const [selectedProductForProduction, setSelectedProductForProduction] = useState(null)
   
-  // Filtros
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('Todas')
 
@@ -47,7 +45,6 @@ export function Estoque() {
       if (error) throw error
       
       setProducts(data)
-      
       const uniqueStockCats = [...new Set(data.map(p => p.stock_category).filter(Boolean))]
       setStockCategories(uniqueStockCats.sort())
 
@@ -59,7 +56,54 @@ export function Estoque() {
     }
   }
 
-  // --- Funções de Ação ---
+  // --- NOVO: CÁLCULO DE CUSTO VIA FICHA TÉCNICA ---
+  const handleUpdateCostFromRecipe = async (product) => {
+    if (!confirm(`Deseja recalcular o custo do "${product.name}" baseado nos ingredientes atuais?`)) return
+
+    const toastId = toast.loading('Calculando...')
+    try {
+        // 1. Busca ingredientes
+        const { data: ingredients, error: ingError } = await supabase
+            .from('product_ingredients')
+            .select('quantity, ingredient: products!ingredient_id(cost_price)')
+            .eq('product_id', product.id)
+
+        if (ingError) throw ingError
+
+        if (!ingredients || ingredients.length === 0) {
+            toast.error('Produto sem ficha técnica.', { id: toastId })
+            return
+        }
+
+        // 2. Calcula custo total
+        let totalCost = 0
+        ingredients.forEach(item => {
+            const cost = Number(item.ingredient?.cost_price || 0)
+            const qty = Number(item.quantity || 0)
+            totalCost += (cost * qty)
+        })
+
+        if (totalCost === 0) {
+            toast.error('Custo calculado é zero. Verifique o custo dos ingredientes.', { id: toastId })
+            return
+        }
+
+        // 3. Atualiza produto
+        const { error: updateError } = await supabase
+            .from('products')
+            .update({ cost_price: totalCost })
+            .eq('id', product.id)
+
+        if (updateError) throw updateError
+
+        toast.success(`Custo atualizado para R$ ${totalCost.toFixed(2)}`, { id: toastId })
+        fetchProducts() // Recarrega tela
+
+    } catch (error) {
+        console.error(error)
+        toast.error('Erro ao atualizar custo.', { id: toastId })
+    }
+  }
 
   async function handleSaveProduct(productData) {
     try {
@@ -104,7 +148,6 @@ export function Estoque() {
     exportToCSV(dataToExport, 'estoque')
   }
 
-  // NOVA LÓGICA DE IMPRESSÃO
   function handlePrint() {
     setIsPrinting(true)
     setTimeout(() => {
@@ -113,7 +156,6 @@ export function Estoque() {
     }, 200)
   }
 
-  // Lógica de Filtros
   const filteredProducts = products.filter(p => {
     const term = searchTerm.toLowerCase()
     const matchesSearch = p.name.toLowerCase().includes(term) || (p.barcode && p.barcode.includes(term))
@@ -121,7 +163,6 @@ export function Estoque() {
     return matchesSearch && matchesCategory
   })
 
-  // --- BARRA DE NÍVEL VISUAL ---
   const StockLevelBar = ({ current, min, max }) => {
     const visualMax = max || (min ? min * 3 : 100)
     const percentage = Math.min(100, Math.max(0, (current / visualMax) * 100))
@@ -142,7 +183,6 @@ export function Estoque() {
   return (
     <div className="space-y-6" onClick={() => setMenuOpenId(null)}>
       
-      {/* --- ÁREA DE IMPRESSÃO VIA PORTAL (SOLUÇÃO TELA BRANCA) --- */}
       {isPrinting && (
         <PrintPortal>
           <div className="print-a4-landscape">
@@ -194,7 +234,6 @@ export function Estoque() {
         </PrintPortal>
       )}
 
-      {/* HEADER TELA */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -214,14 +253,12 @@ export function Estoque() {
         </div>
       </div>
 
-      {/* FILTROS */}
       <div className="flex flex-col md:flex-row gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-100 no-print">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-3 text-slate-400" size={20} />
           <input type="text" placeholder="Buscar..." className="w-full pl-10 pr-4 py-2 bg-slate-50 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
         </div>
         
-        {/* DROPDOWN */}
         <select 
           className="p-2 bg-slate-50 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]" 
           value={selectedCategory} 
@@ -232,7 +269,6 @@ export function Estoque() {
         </select>
       </div>
 
-      {/* TABELA TELA */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden no-print">
         <table className="w-full text-left">
           <thead className="bg-slate-50 border-b border-slate-200">
@@ -267,8 +303,21 @@ export function Estoque() {
                     </span>
                   </td>
 
-                  <td className="p-4 text-right font-medium text-slate-600">
-                    R$ {Number(product.cost_price || 0).toFixed(2)}
+                  <td className="p-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                        <span className="font-medium text-slate-600">R$ {Number(product.cost_price || 0).toFixed(2)}</span>
+                        
+                        {/* BOTÃO RECALCULAR CUSTO */}
+                        {showProduction && isManager && (
+                            <button 
+                                onClick={() => handleUpdateCostFromRecipe(product)}
+                                className="text-slate-300 hover:text-blue-600 transition-colors"
+                                title="Recalcular custo pela Ficha Técnica"
+                            >
+                                <RefreshCw size={14}/>
+                            </button>
+                        )}
+                    </div>
                   </td>
 
                   <td className="p-4">
@@ -287,7 +336,6 @@ export function Estoque() {
                     )}
                   </td>
 
-                  {/* AÇÕES */}
                   <td className="p-4 text-right flex justify-end items-center gap-1">
                     
                     {showProduction && (
@@ -336,7 +384,6 @@ export function Estoque() {
         </table>
       </div>
 
-      {/* --- MODAIS --- */}
       {isProductModalOpen && <NewProductModal onClose={() => setIsProductModalOpen(false)} onSave={handleSaveProduct} productToEdit={productToEdit} />}
       {selectedProductForRecipe && <RecipeModal isOpen={!!selectedProductForRecipe} product={selectedProductForRecipe} onClose={() => setSelectedProductForRecipe(null)} />}
       {selectedProductForAdjustment && <StockAdjustmentModal isOpen={!!selectedProductForAdjustment} product={selectedProductForAdjustment} onClose={() => setSelectedProductForAdjustment(null)} onConfirm={fetchProducts} />}

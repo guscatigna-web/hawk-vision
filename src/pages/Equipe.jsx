@@ -16,6 +16,7 @@ export function Equipe() {
   const [menuOpenId, setMenuOpenId] = useState(null)
 
   async function fetchEmployees() {
+    setLoading(true)
     const { data, error } = await supabase
       .from('employees')
       .select('*')
@@ -62,7 +63,7 @@ export function Equipe() {
       fetchEmployees()
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao remover.')
+      toast.error('Erro ao remover (pode haver vínculos).')
     }
   }
 
@@ -77,10 +78,8 @@ export function Equipe() {
     setIsModalOpen(true)
   }
 
-  // --- SOLUÇÃO DO FUSO HORÁRIO ---
   const formatDate = (dateString) => {
     if (!dateString) return 'Data N/A';
-    // Pega apenas a parte YYYY-MM-DD, ignorando qualquer hora ou fuso
     const cleanDate = dateString.split('T')[0];
     const [year, month, day] = cleanDate.split('-');
     return `${day}/${month}/${year}`;
@@ -100,7 +99,7 @@ export function Equipe() {
   }
 
   return (
-    <div className="space-y-6" onClick={() => setMenuOpenId(null)}> 
+    <div className="space-y-6 animate-fade-in" onClick={() => setMenuOpenId(null)}> 
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -109,7 +108,7 @@ export function Equipe() {
         </div>
         <button 
           onClick={(e) => { e.stopPropagation(); openCreate(); }} 
-          className="flex items-center bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          className="flex items-center bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg active:scale-95"
         >
           <UserPlus size={20} className="mr-2" />
           Novo Colaborador
@@ -131,7 +130,7 @@ export function Equipe() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredEmployees.map((employee) => (
-          <div key={employee.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow flex flex-col items-center text-center relative group">
+          <div key={employee.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition-all flex flex-col items-center text-center relative group">
             
             <div className="absolute top-4 right-4"> 
               <button 
@@ -148,13 +147,13 @@ export function Equipe() {
                 <div className="absolute right-0 top-10 bg-white shadow-xl border border-slate-100 rounded-lg w-32 z-10 overflow-hidden animate-fade-in">
                   <button 
                     onClick={(e) => { e.stopPropagation(); openEdit(employee); }}
-                    className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"
+                    className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 flex items-center"
                   >
                     <Edit size={14} className="mr-2"/> Editar
                   </button>
                   <button 
                     onClick={(e) => { e.stopPropagation(); handleDeleteEmployee(employee.id); }}
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
+                    className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center"
                   >
                     <Trash2 size={14} className="mr-2"/> Excluir
                   </button>
@@ -178,17 +177,14 @@ export function Equipe() {
             </span>
 
             <div className="mt-6 w-full border-t border-slate-50 pt-4 flex justify-between text-sm text-slate-500">
-               <span>
-                 {/* AQUI APLICAMOS A CORREÇÃO DE DATA */}
-                 Desde: {formatDate(employee.admission_date)}
-               </span>
+               <span>Desde: {formatDate(employee.admission_date)}</span>
             </div>
             
             <button 
               onClick={() => navigate(`/funcionarios/${employee.id}`)}
-              className="mt-4 w-full py-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 font-medium text-sm transition-colors"
+              className="mt-4 w-full py-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 font-medium text-sm transition-colors border border-slate-100"
             >
-              Ver Perfil
+              Ver Perfil Completo
             </button>
           </div>
         ))}

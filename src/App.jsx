@@ -29,12 +29,12 @@ export default function App() {
           <Route path="estoque" element={<Estoque />} />
           <Route path="inventario" element={<Inventario />} />
           <Route path="equipe" element={<Equipe />} />
-          <Route path="equipe/:id" element={<EmployeeDetails />} />
           <Route path="relatorios" element={<Relatorios />} />
           <Route path="notificacoes" element={<Notificacoes />} />
           <Route path="configuracoes" element={<Configuracoes />} />
           <Route path="cozinha" element={<Cozinha />} />
           <Route path="bar" element={<Bar />} />
+          <Route path="/funcionarios/:id" element={<EmployeeDetails />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

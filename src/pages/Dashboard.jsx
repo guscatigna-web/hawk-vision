@@ -1,32 +1,42 @@
 import { useEffect, useState } from 'react'
-import { DollarSign, Users, AlertTriangle, ShoppingBag, TrendingUp, Printer, CreditCard, ArrowUpRight } from 'lucide-react'
-import { StatCard } from '../components/StatCard'
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable'
+import { Printer, Settings, Plus, Save, RotateCcw, Loader2, LayoutGrid } from 'lucide-react'
 import { supabase } from '../lib/supabase' 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
-import { PrintPortal, CustomerReceipt } from '../components/Receipts' // NOVO: Usa o Portal
-import { useNavigate } from 'react-router-dom'
+import { PrintPortal, CustomerReceipt } from '../components/Receipts' 
+import { WIDGET_REGISTRY } from '../components/dashboard/widgetConfig'
+import { SortableWidget } from '../components/dashboard/SortableWidget'
+import toast from 'react-hot-toast'
+
+// Layout Padrão Atualizado
+const DEFAULT_LAYOUT = ['revenue', 'orders', 'tables', 'stock', 'salesChart', 'paymentChart', 'topProducts']
 
 export function Dashboard() {
-  const navigate = useNavigate()
-  
-  const [metrics, setMetrics] = useState({
-    todayRevenue: 0,
-    ticketMedio: 0,
-    openOrders: 0,
-    lowStockCount: 0,
-    activeCashiers: 0
+  const [metrics, setMetrics] = useState({ 
+    todayRevenue: 0, 
+    ticketMedio: 0, 
+    lowStockCount: 0, 
+    activeCashiers: 0,
+    openTables: 0,
+    // Nova Estrutura KDS
+    kds: { kitchenQueue: 0, kitchenPrep: 0, barQueue: 0, barPrep: 0 }
   })
   
-  const [chartsData, setChartsData] = useState({
-    salesByHour: [],
-    paymentMethods: [],
-    topProducts: []
-  })
-
+  const [chartsData, setChartsData] = useState({ salesByHour: [], paymentMethods: [], topProducts: [] })
   const [loading, setLoading] = useState(true)
   const [printingOrder, setPrintingOrder] = useState(null)
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8']
+  const [isEditing, setIsEditing] = useState(false)
+  const [items, setItems] = useState(() => {
+    const saved = localStorage.getItem('hawk_dashboard_layout')
+    return saved ? JSON.parse(saved) : DEFAULT_LAYOUT
+  })
+  const [availableWidgets, setAvailableWidgets] = useState([])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   useEffect(() => {
     fetchDashboardData()
@@ -34,276 +44,204 @@ export function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    const allIds = Object.keys(WIDGET_REGISTRY)
+    const currentIds = items
+    setAvailableWidgets(allIds.filter(id => !currentIds.includes(id)))
+  }, [items])
+
   async function fetchDashboardData() {
     try {
-      const today = new Date()
-      const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString()
-      const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString()
-
-      // 1. BUSCA VENDAS DO DIA
-      const { data: salesData, error: salesError } = await supabase
-        .from('sales')
-        .select('total, created_at, status, payment_method')
-        .gte('created_at', startOfDay)
-        .lte('created_at', endOfDay)
+        const today = new Date()
+        const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString()
+        const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString()
+  
+        // 1. FATURAMENTO
+        const { data: salesData } = await supabase.from('sales').select('total, created_at, status').gte('created_at', startOfDay).lte('created_at', endOfDay)
+        const completedSales = (salesData || []).filter(sale => sale.status === 'concluido')
+        const todayRevenue = completedSales.reduce((acc, curr) => acc + (curr.total || 0), 0)
+        const ticketMedio = completedSales.length > 0 ? todayRevenue / completedSales.length : 0
         
-      if (salesError) throw salesError
-
-      const completedSales = salesData.filter(sale => sale.status === 'concluido')
-      
-      // Faturamento e Ticket Médio
-      const todayRevenue = completedSales.reduce((acc, curr) => acc + (curr.total || 0), 0)
-      const ticketMedio = completedSales.length > 0 ? todayRevenue / completedSales.length : 0
-
-      // Processamento para Gráficos
-      const hoursMap = {}
-      const paymentsMap = {}
-
-      completedSales.forEach(sale => {
-        const hour = new Date(sale.created_at).getHours()
-        hoursMap[hour] = (hoursMap[hour] || 0) + sale.total
-
-        const method = sale.payment_method || 'Outros'
-        paymentsMap[method] = (paymentsMap[method] || 0) + sale.total
-      })
-      
-      const salesByHour = Array.from({ length: 24 }, (_, i) => ({
-        hour: `${i}h`,
-        valor: hoursMap[i] || 0
-      }))
-
-      const paymentMethods = Object.keys(paymentsMap).map(key => ({
-        name: key.charAt(0).toUpperCase() + key.slice(1),
-        value: paymentsMap[key]
-      }))
-
-      // 2. PEDIDOS ABERTOS
-      const { count: openOrders } = await supabase
-        .from('sales')
-        .select('*', { count: 'exact', head: true })
-        .in('status', ['aberto', 'preparando', 'pronto'])
-
-      // 3. ALERTAS DE ESTOQUE
-      const { data: productsData } = await supabase
-        .from('products')
-        .select('track_stock, stock_quantity, min_stock_quantity')
-        .eq('track_stock', true)
-
-      const lowStockCount = productsData 
-        ? productsData.filter(p => p.stock_quantity <= (p.min_stock_quantity || 0)).length
-        : 0
-
-      // 4. CAIXAS ATIVOS
-      const { count: activeCashiers } = await supabase
-        .from('cashier_sessions')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'open')
-
-      // 5. TOP PRODUTOS
-      const { data: itemsData } = await supabase
-        .from('sale_items')
-        .select(`
-          quantity,
-          product: products (name),
-          sales!inner (status, created_at)
-        `)
-        .eq('sales.status', 'concluido')
-        .gte('sales.created_at', startOfDay)
-        .lte('sales.created_at', endOfDay)
-
-      const productMap = {}
-      if (itemsData) {
-        itemsData.forEach(item => {
-          const prodName = item.product?.name || 'Desconhecido'
-          productMap[prodName] = (productMap[prodName] || 0) + item.quantity
+        const hoursMap = {}
+        completedSales.forEach(sale => {
+          const hour = new Date(sale.created_at).getHours()
+          hoursMap[hour] = (hoursMap[hour] || 0) + sale.total
         })
-      }
+        const salesByHour = Array.from({ length: 24 }, (_, i) => ({ hour: `${i}h`, valor: hoursMap[i] || 0 }))
+  
+        // 2. PAGAMENTOS
+        const { data: paymentsData } = await supabase.from('sale_payments').select(`amount, payment_method, sale: sales!inner (status, created_at)`).eq('sale.status', 'concluido').gte('sale.created_at', startOfDay).lte('sale.created_at', endOfDay)
+        const paymentsMap = {}
+        if (paymentsData) paymentsData.forEach(p => { const method = p.payment_method || 'Outros'; const label = method.charAt(0).toUpperCase() + method.slice(1); paymentsMap[label] = (paymentsMap[label] || 0) + Number(p.amount) })
+        const paymentMethods = Object.keys(paymentsMap).map(key => ({ name: key, value: paymentsMap[key] }))
+  
+        // 3. KDS DETALHADO (COZINHA vs BAR)
+        const { data: kdsItems } = await supabase
+          .from('sale_items')
+          .select('status, product: products(destination)')
+          .in('status', ['pending', 'preparing'])
+        
+        let kitchenQueue = 0, kitchenPrep = 0, barQueue = 0, barPrep = 0;
+        
+        if (kdsItems) {
+            kdsItems.forEach(item => {
+                const dest = item.product?.destination || 'cozinha'
+                const status = item.status
+                
+                if (dest === 'bar') {
+                    if (status === 'pending') barQueue++
+                    else barPrep++
+                } else {
+                    if (status === 'pending') kitchenQueue++
+                    else kitchenPrep++
+                }
+            })
+        }
 
-      const topProducts = Object.entries(productMap)
-        .map(([name, qtd]) => ({ name, qtd }))
-        .sort((a, b) => b.qtd - a.qtd)
-        .slice(0, 5)
+        // 4. OUTROS KPIS
+        const { count: activeTables } = await supabase.from('sales').select('*', { count: 'exact', head: true }).eq('status', 'aberto').not('table_number', 'is', null)
+        const { data: productsData } = await supabase.from('products').select('stock_quantity, min_stock_quantity').eq('track_stock', true)
+        const lowStockCount = productsData ? productsData.filter(p => p.stock_quantity <= (p.min_stock_quantity || 0)).length : 0
+        const { count: activeCashiers } = await supabase.from('cashier_sessions').select('*', { count: 'exact', head: true }).eq('status', 'open')
+  
+        // 5. TOP PRODUTOS
+        const { data: itemsData } = await supabase.from('sale_items').select(`quantity, product: products (name), sales!inner (status, created_at)`).eq('sales.status', 'concluido').gte('sales.created_at', startOfDay).lte('sales.created_at', endOfDay)
+        const productMap = {}
+        if (itemsData) itemsData.forEach(item => { const prodName = item.product?.name || 'Item Removido'; productMap[prodName] = (productMap[prodName] || 0) + item.quantity })
+        const topProducts = Object.entries(productMap).map(([name, qtd]) => ({ name, qtd })).sort((a, b) => b.qtd - a.qtd).slice(0, 5)
+  
+        setMetrics({ 
+          todayRevenue, 
+          ticketMedio, 
+          lowStockCount, 
+          activeCashiers,
+          openTables: activeTables || 0,
+          kds: { kitchenQueue, kitchenPrep, barQueue, barPrep } // Nova métrica composta
+        })
+        setChartsData({ salesByHour, paymentMethods, topProducts })
+    } catch(e) { console.error(e) } finally { setLoading(false) }
+  }
 
-      setMetrics({ todayRevenue, ticketMedio, openOrders, lowStockCount, activeCashiers })
-      setChartsData({ salesByHour, paymentMethods, topProducts })
-
-    } catch (error) {
-      console.error('Erro ao carregar dashboard:', error)
-    } finally {
-      setLoading(false)
+  // --- LÓGICA DE DND ---
+  function handleDragEnd(event) {
+    const { active, over } = event
+    if (active.id !== over.id) {
+      setItems((items) => {
+        const oldIndex = items.indexOf(active.id)
+        const newIndex = items.indexOf(over.id)
+        return arrayMove(items, oldIndex, newIndex)
+      })
     }
+  }
+
+  function handleSaveLayout() {
+    localStorage.setItem('hawk_dashboard_layout', JSON.stringify(items))
+    setIsEditing(false)
+    toast.success("Layout salvo!")
+  }
+
+  function handleResetLayout() {
+    setItems(DEFAULT_LAYOUT)
+    localStorage.removeItem('hawk_dashboard_layout')
+    toast("Layout restaurado para o padrão")
+  }
+
+  function handleRemoveWidget(id) {
+    setItems(prev => prev.filter(item => item !== id))
+  }
+
+  function handleAddWidget(id) {
+    setItems(prev => [...prev, id])
   }
 
   function handleTestPrint() {
-    const fakeOrder = {
-      id: 'TESTE',
-      sequence_id: 999,
-      created_at: new Date().toISOString(),
-      total: 45.90,
-      payment_method: 'PIX',
-      change: 0,
-      items: [
-        { quantity: 2, name: 'X-Bacon Hawk', price: 15.00 },
-        { quantity: 1, name: 'Coca-Cola 600ml', price: 8.90 },
-        { quantity: 1, name: 'Batata Frita P', price: 7.00 }
-      ]
-    }
+    const fakeOrder = { id: 'TESTE', total: 0, items: [] } 
     setPrintingOrder(fakeOrder)
-    setTimeout(() => window.print(), 100)
+    setTimeout(() => { window.print(); setTimeout(() => setPrintingOrder(null), 1000) }, 500)
   }
+
+  if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-600" size={40} /></div>
 
   return (
     <div className="space-y-6 animate-fade-in pb-10">
-      
-      {/* PORTAL DE IMPRESSÃO */}
-      {printingOrder && (
-        <PrintPortal>
-          <CustomerReceipt order={printingOrder} />
-        </PrintPortal>
-      )}
+      {printingOrder && <PrintPortal><CustomerReceipt order={printingOrder} company={{ trade_name: 'Hawk Vision' }} /></PrintPortal>}
 
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Dashboard Gerencial</h1>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            Dashboard Gerencial
+            {isEditing && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded border border-amber-200">MODO EDIÇÃO</span>}
+          </h1>
           <p className="text-sm text-slate-500 capitalize">
             {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
           </p>
         </div>
+        
         <div className="flex items-center gap-2">
-            <button 
-                onClick={handleTestPrint}
-                className="no-print flex items-center gap-2 bg-white text-slate-600 border border-slate-200 px-3 py-2 rounded-lg text-sm hover:bg-slate-50 transition-colors"
-            >
-                <Printer size={16} /> Testar Impressora
-            </button>
+            {!isEditing ? (
+              <>
+                <button onClick={handleTestPrint} className="no-print btn-secondary text-xs px-3 py-2"><Printer size={16} className="mr-2"/> Testar Print</button>
+                <button onClick={() => setIsEditing(true)} className="no-print btn-secondary text-xs px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700"><Settings size={16} className="mr-2"/> Personalizar</button>
+              </>
+            ) : (
+              <>
+                <button onClick={handleResetLayout} className="btn-secondary text-xs px-3 py-2 text-slate-500"><RotateCcw size={16} className="mr-2"/> Restaurar</button>
+                <button onClick={handleSaveLayout} className="btn-primary text-xs px-4 py-2 bg-green-600 hover:bg-green-700"><Save size={16} className="mr-2"/> Salvar Layout</button>
+              </>
+            )}
         </div>
       </div>
 
-      {/* CARDS KPI */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        <StatCard 
-          title="Faturamento Hoje"
-          value={loading ? "..." : `R$ ${metrics.todayRevenue.toFixed(2)}`}
-          icon={<DollarSign size={20} className="text-green-600" />}
-          color="bg-green-600"
-          description={`${metrics.ticketMedio > 0 ? 'Ticket Médio: R$ ' + metrics.ticketMedio.toFixed(2) : 'Sem vendas'}`}
-        />
-
-        <StatCard 
-          title="Pedidos na Cozinha"
-          value={loading ? "..." : metrics.openOrders}
-          icon={<ShoppingBag size={20} className="text-blue-600" />}
-          color="bg-blue-600"
-          description="Aguardando ou Em preparo"
-        />
-
-        <StatCard 
-          title="Caixas Abertos"
-          value={loading ? "..." : metrics.activeCashiers}
-          icon={<Users size={20} className="text-violet-600" />}
-          color="bg-violet-600"
-          description="Sessões ativas agora"
-        />
-
-        <div 
-          onClick={() => navigate('/estoque')}
-          className="cursor-pointer transition-transform hover:scale-[1.02]"
-        >
-          <StatCard 
-            title="Estoque Baixo"
-            value={loading ? "..." : metrics.lowStockCount}
-            icon={<AlertTriangle size={20} className="text-red-600" />}
-            color="bg-red-600"
-            description="Itens abaixo do mínimo"
-          />
-        </div>
-
-      </div>
-
-      {/* ÁREA DE GRÁFICOS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-        
-        {/* Vendas por Hora */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96">
-          <h3 className="text-lg font-semibold text-slate-700 mb-6 flex items-center gap-2">
-            <TrendingUp size={18} /> Fluxo de Vendas (Hora a Hora)
-          </h3>
-          <ResponsiveContainer width="100%" height="85%">
-            <BarChart data={chartsData.salesByHour}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="hour" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`} />
-              <Tooltip 
-                formatter={(value) => [`R$ ${value.toFixed(2)}`, 'Vendas']} 
-                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-              />
-              <Bar dataKey="valor" fill="#2563eb" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Meios de Pagamento */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96">
-          <h3 className="text-lg font-semibold text-slate-700 mb-2 flex items-center gap-2">
-            <CreditCard size={18} /> Pagamentos
-          </h3>
-          <div className="h-full w-full flex flex-col items-center justify-center -mt-6">
-             {chartsData.paymentMethods.length > 0 ? (
-                <ResponsiveContainer width="100%" height="80%">
-                  <PieChart>
-                    <Pie
-                      data={chartsData.paymentMethods}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={80}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {chartsData.paymentMethods.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
-                    <Legend verticalAlign="bottom" height={36}/>
-                  </PieChart>
-                </ResponsiveContainer>
-             ) : (
-                <div className="text-center text-slate-400">
-                   <p className="text-sm">Sem dados hoje</p>
-                </div>
-             )}
+      {/* ÁREA DE ADICIONAR WIDGETS */}
+      {isEditing && availableWidgets.length > 0 && (
+        <div className="bg-slate-100 border-2 border-dashed border-slate-300 p-4 rounded-xl animate-fade-in">
+          <p className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><LayoutGrid size={14}/> Widgets Disponíveis (Clique para adicionar)</p>
+          <div className="flex flex-wrap gap-2">
+            {availableWidgets.map(id => (
+              <button 
+                key={id}
+                onClick={() => handleAddWidget(id)}
+                className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-all shadow-sm"
+              >
+                <Plus size={16}/> {WIDGET_REGISTRY[id].label}
+              </button>
+            ))}
           </div>
         </div>
+      )}
 
-        {/* Top Produtos */}
-        <div className="lg:col-span-3 bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-           <h3 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-             <ArrowUpRight size={18} /> Produtos Mais Vendidos (Top 5)
-           </h3>
-           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              {chartsData.topProducts.length > 0 ? (
-                chartsData.topProducts.map((prod, idx) => (
-                  <div key={idx} className="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col items-center text-center">
-                     <span className={`text-2xl font-bold ${idx === 0 ? 'text-amber-500' : 'text-slate-700'}`}>
-                        {prod.qtd}
-                     </span>
-                     <span className="text-xs text-slate-500 uppercase font-bold mt-1 line-clamp-2">
-                        {prod.name}
-                     </span>
-                     {idx === 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full mt-2">Campeão</span>}
-                  </div>
-                ))
-              ) : (
-                <div className="col-span-5 text-center py-8 text-slate-400">
-                   Nenhum produto vendido hoje.
-                </div>
-              )}
-           </div>
-        </div>
+      {/* GRID DND */}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items} strategy={rectSortingStrategy}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {items.map(id => {
+              const WidgetConfig = WIDGET_REGISTRY[id]
+              if (!WidgetConfig) return null
+              
+              const widgetData = {
+                ...metrics,
+                salesByHour: chartsData.salesByHour,
+                paymentMethods: chartsData.paymentMethods,
+                topProducts: chartsData.topProducts
+              }
 
-      </div>
+              return (
+                <SortableWidget 
+                  key={id} 
+                  id={id} 
+                  isEditing={isEditing}
+                  onRemove={handleRemoveWidget}
+                  colSpan={WidgetConfig.defaultColSpan}
+                >
+                  <WidgetConfig.component data={widgetData} />
+                </SortableWidget>
+              )
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+
     </div>
   )
 }

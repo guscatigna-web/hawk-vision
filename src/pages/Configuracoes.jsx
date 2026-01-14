@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, Building2, FileText, Loader2, MapPin, Printer, Monitor, ChevronRight, ArrowLeft, Package, Trash2, Plus, Pencil, X, AlertTriangle, CreditCard, DollarSign, Percent, Lock, Server, Tag } from 'lucide-react'
+import { Save, Building2, FileText, Loader2, MapPin, Printer, Monitor, ChevronRight, ArrowLeft, Package, Trash2, Plus, Pencil, X, AlertTriangle, CreditCard, DollarSign, Percent, Lock, Server, Tag, MessageSquare } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 
@@ -40,7 +40,6 @@ function SettingsMenu({ onSelect }) {
         onClick={() => onSelect('empresa')}
       />
 
-      {/* CARD: EMISSÃO FISCAL */}
       <MenuCard 
         icon={<FileText size={24}/>} 
         bg="bg-indigo-50" color="text-indigo-600"
@@ -92,7 +91,6 @@ function MenuCard({ icon, bg, color, title, desc, onClick }) {
   )
 }
 
-// --- CONFIGURAÇÃO DE EMISSÃO (CSC/TOKEN) ---
 function FiscalConfig({ onBack }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -206,7 +204,6 @@ function FiscalConfig({ onBack }) {
   )
 }
 
-// --- DADOS DA EMPRESA ---
 function CompanySettings({ onBack }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -215,10 +212,9 @@ function CompanySettings({ onBack }) {
     id: null,
     company_name: '',
     cnpj: '',
-    // NOVOS CAMPOS FISCAIS
     state_registration: '', 
     municipal_registration: '',
-    tax_regime: '1', // 1=Simples Nacional
+    tax_regime: '1',
     cep: '',
     address: '',
     city: ''
@@ -259,7 +255,8 @@ function CompanySettings({ onBack }) {
           tax_regime: settings.tax_regime,
           cep: settings.cep, 
           address: settings.address, 
-          city: settings.city
+          city: settings.city,
+          updated_at: new Date()
         })
 
       if (error) throw error
@@ -351,215 +348,85 @@ function CompanySettings({ onBack }) {
   )
 }
 
-// --- CONFIGURAÇÕES FINANCEIRAS (ATUALIZADO) ---
-function FinancialSettings({ onBack }) {
-  const [loading, setLoading] = useState(true)
+function PrinterSettings({ onBack }) {
+  const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
   
-  // Estados Pagamento/Taxas
-  const [methods, setMethods] = useState([])
-  const [newMethod, setNewMethod] = useState('')
-  const [serviceFee, setServiceFee] = useState(10) 
+  // NOVA CONFIGURAÇÃO (Bloco 2)
+  const [askRelease, setAskRelease] = useState(() => {
+    const saved = localStorage.getItem('hawk_ask_table_release')
+    return saved === null ? true : saved === 'true'
+  })
 
-  // Estados Descontos
-  const [discounts, setDiscounts] = useState([])
-  const [newDiscount, setNewDiscount] = useState({ name: '', type: 'percentage', value: '' })
-
-  useEffect(() => {
-    fetchSettings()
-  }, [])
-
-  async function fetchSettings() {
-    try {
-      const { data: payData } = await supabase.from('payment_methods').select('*').order('name')
-      if (payData) setMethods(payData)
-
-      const { data: discData } = await supabase.from('discounts_config').select('*').order('name')
-      if (discData) setDiscounts(discData)
-
-    } catch (error) {
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
+  const handleToggle = (value) => {
+    setUseKDS(value)
+    localStorage.setItem('hawk_use_kds', value)
+    toast.success(value ? 'Modo KDS ativado!' : 'Modo Impressora ativado!')
   }
 
-  // --- Lógica Pagamentos ---
-  const handleAddMethod = async () => {
-    if (!newMethod) return
-    try {
-      const { data, error } = await supabase.from('payment_methods').insert([{ name: newMethod, active: true }]).select().single()
-      if (error) throw error
-      setMethods([...methods, data])
-      setNewMethod('')
-      toast.success('Método adicionado')
-    } catch (e) { console.error(e); toast.error('Erro ao salvar') }
+  const handleToggleAsk = (value) => {
+    setAskRelease(value)
+    localStorage.setItem('hawk_ask_table_release', value)
+    toast.success('Configuração atualizada!')
   }
-
-  const handleDeleteMethod = async (id) => {
-    try {
-      await supabase.from('payment_methods').delete().eq('id', id)
-      setMethods(methods.filter(m => m.id !== id))
-      toast.success('Removido')
-    } catch (error) { console.error(error) }
-  }
-
-  // --- Lógica Descontos ---
-  const handleAddDiscount = async () => {
-    if (!newDiscount.name || !newDiscount.value) return toast.error("Preencha nome e valor")
-    try {
-      const { data, error } = await supabase.from('discounts_config').insert([{ 
-        name: newDiscount.name, 
-        type: newDiscount.type, 
-        value: parseFloat(newDiscount.value) 
-      }]).select().single()
-      
-      if (error) throw error
-      setDiscounts([...discounts, data])
-      setNewDiscount({ name: '', type: 'percentage', value: '' })
-      toast.success('Desconto criado')
-    } catch (e) { console.error(e); toast.error('Erro ao salvar desconto') }
-  }
-
-  const handleDeleteDiscount = async (id) => {
-    try {
-      await supabase.from('discounts_config').delete().eq('id', id)
-      setDiscounts(discounts.filter(d => d.id !== id))
-      toast.success('Removido')
-    } catch (error) { console.error(error) }
-  }
-
-  if (loading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin text-blue-600"/></div>
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
       <div className="flex items-center gap-4 mb-6">
         <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
           <ArrowLeft size={24} />
         </button>
         <div>
-          <h2 className="text-xl font-bold text-slate-800">Configurações Financeiras</h2>
-          <p className="text-sm text-slate-500">Taxas, Pagamentos e Descontos.</p>
+          <h2 className="text-xl font-bold text-slate-800">Impressão e Produção</h2>
+          <p className="text-sm text-slate-500">Defina como os pedidos chegam à cozinha.</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        
-        {/* CARD 1: TAXA DE SERVIÇO */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
-          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <Percent className="text-blue-600" size={20}/> Taxa de Serviço (Padrão)
-          </h3>
-          
-          <div className="flex items-center gap-4">
-            <div className="relative w-32">
-              <input 
-                type="number" 
-                value={serviceFee}
-                onChange={e => setServiceFee(e.target.value)}
-                className="w-full pl-4 pr-8 py-2 border border-slate-300 rounded-lg font-bold text-lg outline-none focus:border-blue-500"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
-            </div>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors">
-              Salvar
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 mt-2">Esta porcentagem virá preenchida automaticamente no PDV Restaurante.</p>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <button onClick={() => handleToggle(false)} className={`p-6 rounded-xl border-2 text-left transition-all ${!useKDS ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-200' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-4 ${!useKDS ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`}><Printer size={28} /></div>
+          <h3 className={`font-bold text-lg mb-2 ${!useKDS ? 'text-amber-900' : 'text-slate-700'}`}>Modo Impressora</h3>
+          <p className="text-sm text-slate-500">Gera cupons de papel. O pedido nasce como "Entregue".</p>
+          {!useKDS && <div className="mt-4 inline-block px-3 py-1 bg-amber-200 text-amber-800 text-xs font-bold rounded-full">ATIVO</div>}
+        </button>
 
-        {/* CARD 2: MEIOS DE PAGAMENTO */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
-          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <CreditCard className="text-green-600" size={20}/> Formas de Pagamento
-          </h3>
+        <button onClick={() => handleToggle(true)} className={`p-6 rounded-xl border-2 text-left transition-all ${useKDS ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-4 ${useKDS ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}><Monitor size={28} /></div>
+          <h3 className={`font-bold text-lg mb-2 ${useKDS ? 'text-blue-900' : 'text-slate-700'}`}>Modo KDS</h3>
+          <p className="text-sm text-slate-500">Pedidos vão para as telas. Fluxo: Pendente &rarr; Preparando &rarr; Pronto.</p>
+          {useKDS && <div className="mt-4 inline-block px-3 py-1 bg-blue-200 text-blue-800 text-xs font-bold rounded-full">ATIVO</div>}
+        </button>
+      </div>
 
-          <div className="flex gap-2 mb-4">
-            <input 
-              type="text" 
-              placeholder="Ex: Vale Refeição" 
-              value={newMethod}
-              onChange={e => setNewMethod(e.target.value)}
-              className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-green-500"
-            />
-            <button 
-              onClick={handleAddMethod}
-              className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700"
-            >
-              <Plus size={20}/>
-            </button>
-          </div>
-
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {(methods.length > 0 ? methods : [{id:1, name:'Dinheiro'},{id:2, name:'Crédito'},{id:3, name:'PIX'}]).map(m => (
-              <div key={m.id} className="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
-                <span className="font-medium text-slate-700">{m.name}</span>
-                <button onClick={() => handleDeleteMethod(m.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* CARD 3: DESCONTOS PRÉ-DEFINIDOS (NOVO) */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
-          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <Tag className="text-amber-500" size={20}/> Descontos Pré-definidos
-          </h3>
-
-          <div className="flex flex-col gap-2 mb-4">
-            <input 
-              type="text" 
-              placeholder="Nome (Ex: Aniversário)" 
-              value={newDiscount.name}
-              onChange={e => setNewDiscount({...newDiscount, name: e.target.value})}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500"
-            />
-            <div className="flex gap-2">
-              <select 
-                value={newDiscount.type}
-                onChange={e => setNewDiscount({...newDiscount, type: e.target.value})}
-                className="bg-slate-50 border border-slate-300 rounded-lg text-sm px-2 outline-none"
-              >
-                <option value="percentage">%</option>
-                <option value="fixed">R$</option>
-              </select>
-              <input 
-                type="number" 
-                placeholder="Valor" 
-                value={newDiscount.value}
-                onChange={e => setNewDiscount({...newDiscount, value: e.target.value})}
-                className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500"
-              />
-              <button 
-                onClick={handleAddDiscount}
-                className="bg-amber-500 text-white p-2 rounded-lg hover:bg-amber-600"
-              >
-                <Plus size={20}/>
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {discounts.map(d => (
-              <div key={d.id} className="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
-                <div className="flex flex-col">
-                  <span className="font-medium text-slate-700 text-sm">{d.name}</span>
-                  <span className="text-xs text-slate-500 font-bold">
-                    {d.type === 'percentage' ? `${d.value}%` : `R$ ${d.value}`}
-                  </span>
+      {/* NOVA SEÇÃO: CONTROLE DE FLUXO */}
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-lg font-bold text-slate-800 mb-4">Fluxo de Operação</h3>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+            <div className="flex items-start gap-3">
+                <div className="bg-purple-50 p-2 rounded-lg text-purple-600 mt-1">
+                    <MessageSquare size={20} />
                 </div>
-                <button onClick={() => handleDeleteDiscount(d.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
-              </div>
-            ))}
-            {discounts.length === 0 && <p className="text-center text-xs text-slate-400 italic mt-4">Nenhum desconto configurado.</p>}
-          </div>
+                <div>
+                    <h4 className="font-bold text-slate-700">Confirmar Liberação de Mesa</h4>
+                    <p className="text-sm text-slate-500 max-w-md">
+                        Ao finalizar uma venda com itens na cozinha, perguntar se é um Pagamento Antecipado (mantém pedido) ou Saída do Cliente (limpa pedido).
+                    </p>
+                </div>
+            </div>
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={() => handleToggleAsk(!askRelease)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${askRelease ? 'bg-purple-600' : 'bg-slate-200'}`}
+                >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${askRelease ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <span className="text-sm font-bold ml-2 text-slate-600">{askRelease ? 'LIGADO' : 'DESLIGADO'}</span>
+            </div>
         </div>
-
       </div>
     </div>
   )
 }
 
-// --- CONFIGURAÇÕES DE ESTOQUE ---
 function StockSettings({ onBack }) {
   const [activeTab, setActiveTab] = useState('pdv') // pdv, stock, financial, units
 
@@ -575,7 +442,6 @@ function StockSettings({ onBack }) {
         </div>
       </div>
 
-      {/* TABS */}
       <div className="flex gap-2 overflow-x-auto pb-2 border-b border-slate-200 no-scrollbar">
         <TabButton active={activeTab === 'pdv'} onClick={() => setActiveTab('pdv')} label="Categorias PDV" />
         <TabButton active={activeTab === 'stock'} onClick={() => setActiveTab('stock')} label="Categorias Físicas" />
@@ -583,7 +449,6 @@ function StockSettings({ onBack }) {
         <TabButton active={activeTab === 'units'} onClick={() => setActiveTab('units')} label="Unidades de Medida" />
       </div>
 
-      {/* CONTEÚDO */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
         {activeTab === 'pdv' && (
           <GenericListManager 
@@ -634,7 +499,230 @@ function TabButton({ active, onClick, label }) {
   )
 }
 
-// --- GERENCIADOR GENÉRICO (CRUD) ---
+function FinancialSettings({ onBack }) {
+  const [loading, setLoading] = useState(true)
+  
+  const [methods, setMethods] = useState([])
+  const [newMethod, setNewMethod] = useState('')
+  const [serviceFee, setServiceFee] = useState(10)
+  
+  const [companySettingsId, setCompanySettingsId] = useState(null)
+
+  const [discounts, setDiscounts] = useState([])
+  const [newDiscount, setNewDiscount] = useState({ name: '', type: 'percentage', value: '' })
+
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
+  async function fetchSettings() {
+    try {
+      const { data: payData } = await supabase.from('payment_methods').select('*').order('name')
+      if (payData) setMethods(payData)
+
+      const { data: discData } = await supabase.from('discounts_config').select('*').order('name')
+      if (discData) setDiscounts(discData)
+
+      const { data: compData } = await supabase.from('company_settings').select('id, service_fee').limit(1).single()
+      if (compData) {
+        setServiceFee(compData.service_fee || 10)
+        setCompanySettingsId(compData.id)
+      }
+
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSaveServiceFee = async () => {
+    try {
+      const payload = { service_fee: parseFloat(serviceFee) }
+      
+      if (companySettingsId) payload.id = companySettingsId
+
+      const { error } = await supabase.from('company_settings').upsert(payload)
+      if (error) throw error
+      toast.success('Taxa atualizada!')
+    } catch (error) {
+      console.error(error)
+      toast.error('Erro ao salvar taxa.')
+    }
+  }
+
+  const handleAddMethod = async () => {
+    if (!newMethod) return
+    try {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .insert([{ name: newMethod, active: true }])
+        .select()
+        .single()
+      
+      if (error) throw error
+      setMethods([...methods, data])
+      setNewMethod('')
+      toast.success('Método adicionado')
+    } catch (e) { 
+      console.error(e)
+      toast.error('Erro ao adicionar método.') 
+    }
+  }
+
+  const handleDeleteMethod = async (id) => {
+    try {
+      await supabase.from('payment_methods').delete().eq('id', id)
+      setMethods(methods.filter(m => m.id !== id))
+      toast.success('Removido')
+    } catch (error) { console.error(error) }
+  }
+
+  const handleAddDiscount = async () => {
+    if (!newDiscount.name || !newDiscount.value) return toast.error("Preencha nome e valor")
+    try {
+      const { data, error } = await supabase.from('discounts_config').insert([{ name: newDiscount.name, type: newDiscount.type, value: parseFloat(newDiscount.value) }]).select().single()
+      if (error) throw error
+      setDiscounts([...discounts, data])
+      setNewDiscount({ name: '', type: 'percentage', value: '' })
+      toast.success('Desconto criado')
+    } catch (e) { console.error(e); toast.error('Erro ao salvar desconto') }
+  }
+
+  const handleDeleteDiscount = async (id) => {
+    try {
+      await supabase.from('discounts_config').delete().eq('id', id)
+      setDiscounts(discounts.filter(d => d.id !== id))
+      toast.success('Removido')
+    } catch (error) { console.error(error) }
+  }
+
+  if (loading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin text-blue-600"/></div>
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+      <div className="flex items-center gap-4 mb-6">
+        <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
+          <ArrowLeft size={24} />
+        </button>
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Configurações Financeiras</h2>
+          <p className="text-sm text-slate-500">Taxas, Pagamentos e Descontos.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
+          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Percent className="text-blue-600" size={20}/> Taxa de Serviço
+          </h3>
+          <div className="flex items-center gap-4">
+            <div className="relative w-32">
+              <input 
+                type="number" 
+                value={serviceFee}
+                onChange={e => setServiceFee(e.target.value)}
+                className="w-full pl-4 pr-8 py-2 border border-slate-300 rounded-lg font-bold text-lg outline-none focus:border-blue-500"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
+            </div>
+            <button onClick={handleSaveServiceFee} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors">
+              Salvar
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">Aplicado automaticamente no PDV.</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
+          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <CreditCard className="text-green-600" size={20}/> Formas de Pagamento
+          </h3>
+
+          <div className="flex gap-2 mb-4">
+            <input 
+              type="text" 
+              placeholder="Ex: Vale Refeição" 
+              value={newMethod}
+              onChange={e => setNewMethod(e.target.value)}
+              className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-green-500"
+            />
+            <button 
+              onClick={handleAddMethod}
+              className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700"
+            >
+              <Plus size={20}/>
+            </button>
+          </div>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+            {methods.map(m => (
+              <div key={m.id} className="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
+                <span className="font-medium text-slate-700">{m.name}</span>
+                <button onClick={() => handleDeleteMethod(m.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
+          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Tag className="text-amber-500" size={20}/> Descontos Pré-definidos
+          </h3>
+
+          <div className="flex flex-col gap-2 mb-4">
+            <input 
+              type="text" 
+              placeholder="Nome (Ex: Aniversário)" 
+              value={newDiscount.name}
+              onChange={e => setNewDiscount({...newDiscount, name: e.target.value})}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500"
+            />
+            <div className="flex gap-2">
+              <select 
+                value={newDiscount.type}
+                onChange={e => setNewDiscount({...newDiscount, type: e.target.value})}
+                className="bg-slate-50 border border-slate-300 rounded-lg text-sm px-2 outline-none"
+              >
+                <option value="percentage">%</option>
+                <option value="fixed">R$</option>
+              </select>
+              <input 
+                type="number" 
+                placeholder="Valor" 
+                value={newDiscount.value}
+                onChange={e => setNewDiscount({...newDiscount, value: e.target.value})}
+                className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500"
+              />
+              <button 
+                onClick={handleAddDiscount}
+                className="bg-amber-500 text-white p-2 rounded-lg hover:bg-amber-600"
+              >
+                <Plus size={20}/>
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+            {discounts.map(d => (
+              <div key={d.id} className="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
+                <div className="flex flex-col">
+                  <span className="font-medium text-slate-700 text-sm">{d.name}</span>
+                  <span className="text-xs text-slate-500 font-bold">
+                    {d.type === 'percentage' ? `${d.value}%` : `R$ ${d.value}`}
+                  </span>
+                </div>
+                <button onClick={() => handleDeleteDiscount(d.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
 function GenericListManager({ table, label, hasSymbol, usageField, usageType }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -654,12 +742,16 @@ function GenericListManager({ table, label, hasSymbol, usageField, usageType }) 
 
   async function handleSave() {
     if (!newItem.name) return toast.error('Nome obrigatório')
-    if (hasSymbol && !newItem.symbol) return toast.error('Símbolo obrigatório')
+    
+    // CORREÇÃO: SANITIZAÇÃO (Se não tem símbolo, não envia)
+    const payload = { name: newItem.name }
+    if (hasSymbol) payload.symbol = newItem.symbol
 
     try {
       if (editingItem) {
-        await supabase.from(table).update(newItem).eq('id', editingItem.id)
+        await supabase.from(table).update(payload).eq('id', editingItem.id)
         
+        // Atualiza produtos que usam esse item (Cascata manual)
         if (usageType === 'text' && editingItem.name !== newItem.name) {
            await supabase.from('products').update({ [usageField]: newItem.name }).eq(usageField, editingItem.name)
         }
@@ -669,7 +761,7 @@ function GenericListManager({ table, label, hasSymbol, usageField, usageType }) 
 
         toast.success('Atualizado com sucesso!')
       } else {
-        await supabase.from(table).insert(newItem)
+        await supabase.from(table).insert(payload)
         toast.success('Criado com sucesso!')
       }
       setNewItem({ name: '', symbol: '' })
@@ -677,7 +769,7 @@ function GenericListManager({ table, label, hasSymbol, usageField, usageType }) 
       fetchItems()
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao salvar.')
+      toast.error('Erro ao salvar. Verifique se o nome já existe.')
     }
   }
 
@@ -775,47 +867,6 @@ function GenericListManager({ table, label, hasSymbol, usageField, usageType }) 
           </table>
         </div>
       )}
-    </div>
-  )
-}
-
-// --- IMPRESSÃO & KDS ---
-function PrinterSettings({ onBack }) {
-  const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
-
-  const handleToggle = (value) => {
-    setUseKDS(value)
-    localStorage.setItem('hawk_use_kds', value)
-    toast.success(value ? 'Modo KDS ativado!' : 'Modo Impressora ativado!')
-  }
-
-  return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
-      <div className="flex items-center gap-4 mb-6">
-        <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
-          <ArrowLeft size={24} />
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">Impressão e Produção</h2>
-          <p className="text-sm text-slate-500">Defina como os pedidos chegam à cozinha.</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <button onClick={() => handleToggle(false)} className={`p-6 rounded-xl border-2 text-left transition-all ${!useKDS ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-200' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-          <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-4 ${!useKDS ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`}><Printer size={28} /></div>
-          <h3 className={`font-bold text-lg mb-2 ${!useKDS ? 'text-amber-900' : 'text-slate-700'}`}>Modo Impressora</h3>
-          <p className="text-sm text-slate-500">Gera cupons de papel. O pedido nasce como "Entregue".</p>
-          {!useKDS && <div className="mt-4 inline-block px-3 py-1 bg-amber-200 text-amber-800 text-xs font-bold rounded-full">ATIVO</div>}
-        </button>
-
-        <button onClick={() => handleToggle(true)} className={`p-6 rounded-xl border-2 text-left transition-all ${useKDS ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-          <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-4 ${useKDS ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}><Monitor size={28} /></div>
-          <h3 className={`font-bold text-lg mb-2 ${useKDS ? 'text-blue-900' : 'text-slate-700'}`}>Modo KDS</h3>
-          <p className="text-sm text-slate-500">Pedidos vão para as telas. Fluxo: Pendente &rarr; Preparando &rarr; Pronto.</p>
-          {useKDS && <div className="mt-4 inline-block px-3 py-1 bg-blue-200 text-blue-800 text-xs font-bold rounded-full">ATIVO</div>}
-        </button>
-      </div>
     </div>
   )
 }

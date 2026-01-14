@@ -9,13 +9,33 @@ export function Cozinha() {
 
   useEffect(() => {
     fetchOrders()
-    const interval = setInterval(fetchOrders, 10000) 
+    const interval = setInterval(fetchOrders, 5000) // Reduzi para 5s para ficar mais ágil
     return () => clearInterval(interval)
   }, [])
 
   async function fetchOrders() {
     try {
-      // Busca TODAS as vendas ativas, mas o segredo está no filtro dos itens abaixo
+      // 1. Busca o horário de abertura do caixa mais antigo que ainda está aberto (Início do Turno)
+      const { data: openSessions } = await supabase
+        .from('cashier_sessions')
+        .select('opening_time')
+        .eq('status', 'open')
+        .order('opening_time', { ascending: true })
+        .limit(1)
+      
+      let startTime;
+      
+      if (openSessions && openSessions.length > 0) {
+        // Se tem caixa aberto, pega tudo desde a abertura desse caixa
+        startTime = openSessions[0].opening_time
+      } else {
+        // Se NÃO tem caixa aberto (ex: só conferência), pega as últimas 24h por segurança
+        const yesterday = new Date()
+        yesterday.setHours(yesterday.getHours() - 24)
+        startTime = yesterday.toISOString()
+      }
+
+      // 2. Busca vendas baseadas no HORÁRIO (Turno), não no ID específico
       const { data, error } = await supabase
         .from('sales')
         .select(`
@@ -27,7 +47,8 @@ export function Cozinha() {
             product: products (name, unit, destination)
           )
         `)
-        .not('status', 'in', '("concluido","cancelado")')
+        .neq('status', 'cancelado') 
+        .gte('created_at', startTime) // Filtra pelo início do turno
         .order('created_at', { ascending: true })
 
       if (error) throw error
@@ -39,7 +60,7 @@ export function Cozinha() {
     }
   }
 
-  // ATUALIZAÇÃO EM MASSA (TODOS OS ITENS DO CARD)
+  // ATUALIZAÇÃO EM MASSA
   const updateBatchStatus = async (itemIds, newStatus) => {
       try {
         const { error } = await supabase
@@ -62,18 +83,15 @@ export function Cozinha() {
     return Math.floor((now - start) / 60000)
   }
 
-  // --- FILTRAGEM INTELIGENTE (RESOLVE O PROBLEMA DO ITEM REPETIDO) ---
-  
-  // 1. Filtra Pedidos que têm itens PENDENTES para Cozinha
+  // --- FILTRAGEM DE ITENS (Lógica Mantida) ---
   const pendingOrders = orders.map(order => {
     const validItems = order.sale_items.filter(item => 
       (item.status === 'pending') && 
       (!item.product?.destination || item.product?.destination === 'cozinha')
     )
     return { ...order, kitchenItems: validItems }
-  }).filter(order => order.kitchenItems.length > 0) // Só mostra o card se tiver itens pendentes
+  }).filter(order => order.kitchenItems.length > 0) 
 
-  // 2. Filtra Pedidos que têm itens PREPARANDO para Cozinha
   const preparingOrders = orders.map(order => {
     const validItems = order.sale_items.filter(item => 
       (item.status === 'preparing') && 
@@ -88,7 +106,6 @@ export function Cozinha() {
   return (
     <div className="h-[calc(100vh-2rem)] flex flex-col gap-4">
       
-      {/* HEADER */}
       <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
@@ -96,7 +113,7 @@ export function Cozinha() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Cozinha (KDS)</h1>
-            <p className="text-sm text-slate-500">Gerenciamento por Item Individual</p>
+            <p className="text-sm text-slate-500">Visualização de Turno Ativo</p>
           </div>
         </div>
         <div className="flex gap-4 text-sm font-bold">
@@ -111,12 +128,11 @@ export function Cozinha() {
 
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-hidden">
         
-        {/* COLUNA 1: PENDENTES (Apenas itens 'pending' aparecem aqui) */}
+        {/* COLUNA 1: PENDENTES */}
         <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full">
           <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2 sticky top-0">
             <AlertCircle className="text-blue-600"/> Fila de Entrada
           </h2>
-          
           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
             {pendingOrders.length === 0 && (
                 <div className="h-40 flex items-center justify-center text-slate-400 italic border-2 border-dashed border-slate-300 rounded-lg">
@@ -127,7 +143,7 @@ export function Cozinha() {
               <OrderCard 
                 key={order.id} 
                 order={order} 
-                items={order.kitchenItems} // Passa só os itens PENDENTES
+                items={order.kitchenItems} 
                 getWaitTime={getWaitTime} 
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
                 actionLabel="Iniciar Tudo" 
@@ -138,12 +154,11 @@ export function Cozinha() {
           </div>
         </div>
 
-        {/* COLUNA 2: EM PRODUÇÃO (Apenas itens 'preparing' aparecem aqui) */}
+        {/* COLUNA 2: EM PRODUÇÃO */}
         <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 flex flex-col h-full">
           <h2 className="text-lg font-bold text-orange-800 mb-4 flex items-center gap-2 sticky top-0">
             <Flame className="text-orange-600"/> Em Produção
           </h2>
-          
           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
             {preparingOrders.length === 0 && (
                 <div className="h-40 flex items-center justify-center text-orange-300 italic border-2 border-dashed border-orange-200 rounded-lg">
@@ -154,9 +169,9 @@ export function Cozinha() {
               <OrderCard 
                 key={order.id} 
                 order={order} 
-                items={order.kitchenItems} // Passa só os itens PREPARANDO
+                items={order.kitchenItems} 
                 getWaitTime={getWaitTime} 
-                onAction={(ids) => updateBatchStatus(ids, 'ready')} // Move para 'ready' (some da tela)
+                onAction={(ids) => updateBatchStatus(ids, 'ready')} 
                 actionLabel="Finalizar Tudo" 
                 actionIcon={<CheckCircle size={18}/>} 
                 color="orange" 
@@ -179,7 +194,10 @@ function OrderCard({ order, items, getWaitTime, onAction, actionLabel, actionIco
         <div className={`bg-white p-4 rounded-lg shadow-sm border-l-4 ${color === 'blue' ? 'border-l-blue-500' : 'border-l-orange-500'} animate-fade-in`}>
             <div className="flex justify-between items-start mb-3 border-b border-slate-100 pb-2">
                 <div>
-                    <h3 className="text-xl font-bold text-slate-800">{order.customer_name}</h3>
+                    <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        {order.customer_name}
+                        {order.status === 'concluido' && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded uppercase">Pago</span>}
+                    </h3>
                     <p className="text-xs text-slate-400">Pedido #{order.id.toString().slice(0,4)}</p>
                 </div>
                 <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs ${isLate ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>

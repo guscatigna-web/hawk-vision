@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { X, Receipt, Banknote, CreditCard, QrCode, Trash2, Loader2, Check } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { X, Receipt, Banknote, CreditCard, QrCode, Trash2, Loader2, Check, Wallet } from 'lucide-react'
+import { supabase } from '../lib/supabase' // Import necessário para buscar do banco
 
 export function PaymentModal({ 
   onClose, 
@@ -18,16 +19,51 @@ export function PaymentModal({
   isProcessing 
 }) {
   const [amountInput, setAmountInput] = useState('')
+  const [availableMethods, setAvailableMethods] = useState([])
+  const [loadingMethods, setLoadingMethods] = useState(true)
 
-  const triggerAddPayment = (method) => {
+  // 1. BUSCA MÉTODOS CADASTRADOS NO BANCO
+  useEffect(() => {
+    async function fetchMethods() {
+      try {
+        const { data } = await supabase
+          .from('payment_methods')
+          .select('*')
+          .eq('active', true)
+          .order('name')
+        
+        setAvailableMethods(data || [])
+      } catch (error) {
+        console.error("Erro ao buscar métodos:", error)
+      } finally {
+        setLoadingMethods(false)
+      }
+    }
+    fetchMethods()
+  }, [])
+
+  const triggerAddPayment = (methodName) => {
     let val = parseFloat(amountInput)
     // Se vazio ou zero, assume o restante da conta
     if (!val || val <= 0) val = remainingDue
     
     if (val > 0) {
-        onAddPayment(method, val.toFixed(2))
+        // Envia o nome exato que veio do banco
+        onAddPayment(methodName, val.toFixed(2))
         setAmountInput('')
     }
+  }
+
+  // 2. HELPER PARA ESCOLHER ÍCONE E COR BASEADO NO NOME
+  const getMethodStyle = (name) => {
+    const n = name.toLowerCase()
+    if (n.includes('dinheiro') || n.includes('especie')) return { icon: <Banknote size={24}/>, color: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' }
+    if (n.includes('pix')) return { icon: <QrCode size={24}/>, color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' }
+    if (n.includes('credito') || n.includes('crédito')) return { icon: <CreditCard size={24}/>, color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' }
+    if (n.includes('debito') || n.includes('débito')) return { icon: <CreditCard size={24}/>, color: 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100' }
+    
+    // Padrão para outros (Voucher, Ifood, etc)
+    return { icon: <Wallet size={24}/>, color: 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100' }
   }
 
   return (
@@ -40,7 +76,7 @@ export function PaymentModal({
             <Receipt size={20}/> Resumo do Pedido
           </h3>
           
-          <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+          <div className="flex-1 overflow-y-auto space-y-2 mb-4 custom-scrollbar">
             {items.map((item, i) => (
               <div key={i} className="flex justify-between text-sm border-b border-slate-200 pb-1">
                 <span className="truncate w-32">{item.quantity}x {item.product.name}</span>
@@ -55,7 +91,7 @@ export function PaymentModal({
             </div>
             {serviceFeeValue > 0 && (
               <div className="flex justify-between text-slate-500 text-sm">
-                <span>Serviço (10%)</span> <span>R$ {serviceFeeValue.toFixed(2)}</span>
+                <span>Serviço</span> <span>R$ {serviceFeeValue.toFixed(2)}</span>
               </div>
             )}
             {discountValue > 0 && (
@@ -98,56 +134,59 @@ export function PaymentModal({
               </div>
               <button 
                 onClick={() => setAmountInput(remainingDue.toFixed(2))} 
-                className="px-4 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200"
+                className="px-4 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 active:scale-95 transition-transform"
               >
                 Tudo
               </button>
             </div>
           </div>
 
-          {/* GRID DE BOTÕES */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-            <PaymentMethodBtn 
-              icon={<Banknote/>} 
-              label="Dinheiro" 
-              onClick={() => triggerAddPayment('dinheiro')} 
-              color="bg-green-50 text-green-700 hover:bg-green-100 border-green-200" 
-            />
-            <PaymentMethodBtn 
-              icon={<CreditCard/>} 
-              label="Crédito" 
-              onClick={() => triggerAddPayment('credito')} 
-              color="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200" 
-            />
-            <PaymentMethodBtn 
-              icon={<CreditCard/>} 
-              label="Débito" 
-              onClick={() => triggerAddPayment('debito')} 
-              color="bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border-cyan-200" 
-            />
-            <PaymentMethodBtn 
-              icon={<QrCode/>} 
-              label="PIX" 
-              onClick={() => triggerAddPayment('pix')} 
-              color="bg-purple-50 text-purple-700 hover:bg-purple-100 border-purple-200" 
-            />
-          </div>
+          {/* GRID DE BOTÕES (DINÂMICO) */}
+          {loadingMethods ? (
+            <div className="flex justify-center py-10"><Loader2 className="animate-spin text-blue-500"/></div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-8 overflow-y-auto max-h-60 custom-scrollbar pr-1">
+              {availableMethods.length === 0 && (
+                <div className="col-span-full text-center text-slate-400 py-4 italic border-2 border-dashed border-slate-100 rounded-lg">
+                  Nenhuma forma de pagamento cadastrada em Configurações.
+                </div>
+              )}
+              
+              {availableMethods.map((method) => {
+                const style = getMethodStyle(method.name)
+                return (
+                  <PaymentMethodBtn 
+                    key={method.id}
+                    icon={style.icon}
+                    label={method.name} 
+                    onClick={() => triggerAddPayment(method.name)} 
+                    color={style.color} 
+                  />
+                )
+              })}
+            </div>
+          )}
 
           {/* LISTA DE PAGAMENTOS REALIZADOS */}
-          <div className="flex-1 bg-slate-50 rounded-xl border border-slate-100 p-4 mb-4 overflow-y-auto">
-            {payments.length === 0 && <div className="text-center text-slate-400 mt-4">Nenhum pagamento lançado.</div>}
+          <div className="flex-1 bg-slate-50 rounded-xl border border-slate-100 p-4 mb-4 overflow-y-auto custom-scrollbar">
+            {payments.length === 0 && <div className="text-center text-slate-400 mt-4 text-sm">Nenhum pagamento lançado nesta venda.</div>}
             {payments.map((p) => (
-              <div key={p.id} className="flex justify-between items-center bg-white p-3 rounded-lg border border-slate-100 mb-2 shadow-sm animate-fade-in">
-                <div className="flex items-center gap-2">
-                  <span className="uppercase font-bold text-xs bg-slate-100 px-2 py-1 rounded text-slate-600">{p.payment_method}</span>
-                  <span className="font-bold text-slate-700">R$ {Number(p.amount).toFixed(2)}</span>
+              <div key={p.id} className="flex justify-between items-center bg-white p-3 rounded-lg border border-slate-100 mb-2 shadow-sm animate-fade-in-up">
+                <div className="flex items-center gap-3">
+                  <div className="bg-slate-100 p-2 rounded-lg text-slate-600">
+                    {getMethodStyle(p.payment_method).icon}
+                  </div>
+                  <div>
+                    <span className="uppercase font-bold text-xs text-slate-500 block">{p.payment_method}</span>
+                    <span className="font-bold text-slate-800 text-lg">R$ {Number(p.amount).toFixed(2)}</span>
+                  </div>
                 </div>
                 <button 
                   onClick={() => onRemovePayment(p.id)} 
-                  className="text-red-400 hover:text-red-600" 
+                  className="text-red-300 hover:text-red-500 p-2 hover:bg-red-50 rounded transition-colors" 
                   title="Cancelar Pagamento"
                 >
-                  <Trash2 size={18}/>
+                  <Trash2 size={20}/>
                 </button>
               </div>
             ))}
@@ -162,7 +201,7 @@ export function PaymentModal({
                 </span>
               </div>
               {changeDue > 0 && (
-                <div className="text-green-600 font-bold text-xl bg-green-50 px-4 py-2 rounded-lg border border-green-100">
+                <div className="text-green-600 font-bold text-xl bg-green-50 px-4 py-2 rounded-lg border border-green-100 animate-bounce-short">
                   Troco: R$ {changeDue.toFixed(2)}
                 </div>
               )}
@@ -171,7 +210,7 @@ export function PaymentModal({
             <button 
               onClick={onFinishSale}
               disabled={isProcessing || remainingDue > 0.01}
-              className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex justify-center items-center gap-3 transition-all"
+              className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex justify-center items-center gap-3 transition-all active:scale-[0.98]"
             >
               {isProcessing ? <Loader2 className="animate-spin"/> : <Check size={28} strokeWidth={3}/>}
               CONCLUIR VENDA
@@ -187,9 +226,9 @@ export function PaymentModal({
 // Sub-componente interno para os botões
 function PaymentMethodBtn({ icon, label, onClick, color }) {
   return (
-    <button onClick={onClick} className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 ${color}`}>
-      <div className="mb-1 scale-125">{icon}</div>
-      <span className="font-bold text-xs uppercase">{label}</span>
+    <button onClick={onClick} className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 hover:shadow-md ${color}`}>
+      <div className="mb-2 scale-110">{icon}</div>
+      <span className="font-bold text-xs uppercase text-center leading-tight">{label}</span>
     </button>
   )
 }

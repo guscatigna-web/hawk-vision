@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, QrCode, Loader2, ScanBarcode, ChefHat, Receipt, ArrowLeft, Printer, Monitor, FileText, User, Tag, Wallet, X, Check } from 'lucide-react'
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, QrCode, Loader2, ScanBarcode, ChefHat, Receipt, ArrowLeft, Printer, Monitor, FileText, User, Tag, Wallet, X, Check, Settings, Utensils, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useCashier } from '../contexts/CashierContext'
@@ -27,13 +27,31 @@ export function Vendas() {
   const isRestaurantMode = !!tableNumberParam
   const isExpressSession = currentSession?.type === 'express'
 
-  // Configuração KDS
+  // --- CONFIGURAÇÕES DE FLUXO ---
   const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
+  const [autoDeliver, setAutoDeliver] = useState(() => {
+    const saved = localStorage.getItem('hawk_auto_deliver')
+    return saved === null ? true : saved === 'true'
+  })
+
+  // NOVA CONFIGURAÇÃO (Bloco 2) - Corrigido: removemos o setter não utilizado
+  const [askRelease] = useState(() => {
+    const saved = localStorage.getItem('hawk_ask_table_release')
+    return saved === null ? true : saved === 'true'
+  })
+
   const toggleKDSMode = () => {
     const newValue = !useKDS
     setUseKDS(newValue)
     localStorage.setItem('hawk_use_kds', newValue)
     toast(newValue ? "Modo KDS Ativado" : "Modo Impressora Ativado")
+  }
+
+  const toggleAutoDeliver = () => {
+    const newValue = !autoDeliver
+    setAutoDeliver(newValue)
+    localStorage.setItem('hawk_auto_deliver', newValue)
+    toast(newValue ? "Modo Restaurante Ativado" : "Modo Fast-Food Ativado")
   }
 
   // --- CONTROLE DE IMPRESSÃO E MODAL ---
@@ -80,6 +98,7 @@ export function Vendas() {
       try {
         const { data: prodData } = await supabase.from('products').select('*, categories(name)').eq('type', 'sale').order('name')
         const { data: catData } = await supabase.from('categories').select('*').order('name')
+        // Busca Configuração da Empresa (para pegar a Taxa de Serviço)
         const { data: companyData } = await supabase.from('company_settings').select('*').single()
         const { data: discData } = await supabase.from('discounts_config').select('*').eq('active', true)
         
@@ -119,12 +138,14 @@ export function Vendas() {
   }, [saleIdParam, isRestaurantMode, tableNumberParam, fetchExistingSaleItems])
 
 
-  // --- CÁLCULOS TOTAIS ---
+  // --- CÁLCULOS TOTAIS (AGORA DINÂMICO) ---
   const cartTotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0)
   // O subtotal agora é sempre a soma do que está no banco + o que está no carrinho
   const subtotalRaw = existingTotal + cartTotal
   
-  const serviceFeeValue = (isRestaurantMode && includeServiceFee) ? subtotalRaw * 0.10 : 0
+  // LÊ DO BANCO OU USA 10%
+  const serviceFeeRate = (companyInfo?.service_fee || 10) / 100
+  const serviceFeeValue = (isRestaurantMode && includeServiceFee) ? subtotalRaw * serviceFeeRate : 0
   
   const discountValue = discount.type === 'percentage' 
     ? (subtotalRaw * (discount.value / 100)) 
@@ -211,13 +232,21 @@ export function Vendas() {
   // --- KDS ---
   const handleSendOrder = async () => {
     if (cart.length === 0) return toast.error("Carrinho vazio!")
+    if (!currentSession) return toast.error("Abra o caixa antes de lançar!") 
+
     setIsProcessing(true)
     try {
       let activeId = currentSaleId
       if (!activeId) {
         const { data: newSale, error } = await supabase.from('sales').insert({
-            employee_id: user.id, customer_name: customerName || 'Balcão', table_number: tableNumberParam ? parseInt(tableNumberParam) : null, status: 'aberto', total: 0
+            employee_id: user.id, 
+            customer_name: customerName || 'Balcão', 
+            table_number: tableNumberParam ? parseInt(tableNumberParam) : null, 
+            status: 'aberto', 
+            total: 0,
+            cashier_session_id: currentSession.id // VINCULA AO CAIXA
           }).select().single()
+        
         if (error) throw error
         activeId = newSale.id
         setCurrentSaleId(newSale.id)
@@ -246,7 +275,7 @@ export function Vendas() {
     } catch (error) { console.error(error); toast.error("Erro ao enviar.") } finally { setIsProcessing(false) }
   }
 
-  // --- LÓGICA DE PAGAMENTO PERSISTENTE (CORRIGIDA) ---
+  // --- LÓGICA DE PAGAMENTO PERSISTENTE ---
   const handleAddPayment = async (method, amount) => {
     if (!currentSession) return toast.error("Caixa Fechado.")
     setIsProcessing(true)
@@ -269,9 +298,17 @@ export function Vendas() {
 
             // Salva itens do carrinho se houver
             if (cart.length > 0) {
-                const itemsToInsert = cart.map(item => ({ sale_id: activeId, product_id: item.product.id, quantity: item.quantity, unit_price: item.product.price, status: 'ready' }))
+                // Se KDS ativo, itens nascem como 'pending'.
+                const initialStatus = useKDS ? 'pending' : 'delivered' 
+                const itemsToInsert = cart.map(item => ({ 
+                    sale_id: activeId, 
+                    product_id: item.product.id, 
+                    quantity: item.quantity, 
+                    unit_price: item.product.price, 
+                    status: initialStatus 
+                }))
                 await supabase.from('sale_items').insert(itemsToInsert)
-                setCart([]) // Limpa carrinho visual
+                setCart([]) 
             }
         }
 
@@ -286,10 +323,6 @@ export function Vendas() {
         await addTransaction('venda', parseFloat(amount), `Parcial Venda #${activeId}`, method)
 
         toast.success(`Pagamento de R$ ${amount} registrado!`)
-        
-        // CORREÇÃO CRÍTICA: 
-        // Força recarregamento total (Itens do banco + Totais + Pagamentos)
-        // Isso garante que 'existingTotal' seja atualizado e o troco calculado corretamente.
         await fetchExistingSaleItems(activeId)
 
     } catch (error) {
@@ -306,7 +339,6 @@ export function Vendas() {
       try {
           await supabase.from('sale_payments').delete().eq('id', paymentId)
           toast.success("Pagamento removido.")
-          // Recarrega pagamentos e recalcula saldos
           await fetchPayments(currentSaleId)
       } catch (error) {
           console.error(error)
@@ -316,13 +348,33 @@ export function Vendas() {
       }
   }
 
+  // --- FINALIZAÇÃO DE VENDA (INTELIGENTE) ---
   const handleFinishSale = async () => {
     if (remainingDue > 0.01) return toast.error(`Ainda faltam R$ ${remainingDue.toFixed(2)}`)
     
+    // VERIFICAÇÃO DE "PAGAMENTO ANTECIPADO"
+    const hasPendingKitchenItems = existingItems.some(item => ['pending', 'preparing', 'ready'].includes(item.status))
+    let shouldDeliverKitchen = autoDeliver 
+
+    if (autoDeliver && hasPendingKitchenItems && askRelease) {
+        const isStandardFlow = window.confirm(
+            "Finalização de Venda:\n\n" +
+            "O cliente já consumiu e está liberando a mesa?\n" +
+            "Clique [OK] para ENCERRAR produção na cozinha.\n" +
+            "Clique [CANCELAR] se for PAGAMENTO ANTECIPADO (Manter itens na tela)."
+        )
+        
+        if (!isStandardFlow) {
+            shouldDeliverKitchen = false
+            toast("Pagamento antecipado. Pedido mantido na cozinha.", { icon: '👨‍🍳' })
+        }
+    }
+
     setIsProcessing(true)
     const toastId = toast.loading("Finalizando...")
 
     try {
+      // 1. ATUALIZA A VENDA
       await supabase.from('sales').update({
         status: 'concluido',
         total: grandTotalFinal,
@@ -334,8 +386,17 @@ export function Vendas() {
         payment_method: payments.length === 1 ? payments[0].payment_method : 'multiplo'
       }).eq('id', currentSaleId)
 
+      // 2. ATUALIZA O ESTOQUE
       await deductStock([...existingItems, ...cart])
-      
+
+      // 3. ATUALIZA COZINHA (Baseado na decisão acima)
+      if (shouldDeliverKitchen) {
+          await supabase.from('sale_items')
+            .update({ status: 'delivered' })
+            .eq('sale_id', currentSaleId)
+      }
+
+      // 4. FISCAL
       let fiscalData = { status: 'pendente', pdf: null }
       try {
          const result = await FiscalService.emitirNFCe(currentSaleId)
@@ -473,9 +534,26 @@ export function Vendas() {
                 <button onClick={() => navigate('/mesas')} className="p-2 hover:bg-slate-200 rounded-full text-slate-500"><ArrowLeft size={20} /></button>
                 <h2 className="text-xl font-bold text-slate-800">Mesa {tableNumberParam}</h2>
             </div>
-            <button onClick={toggleKDSMode} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}>
-                {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS Ativo' : 'Impressora'}
-            </button>
+            
+            <div className="flex gap-2">
+                <button 
+                    onClick={toggleKDSMode} 
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
+                    title="Alternar entre envio para Tela (KDS) ou Impressão"
+                >
+                    {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS' : 'Print'}
+                </button>
+
+                {/* BOTÃO FLUXO: MODO RESTAURANTE vs MODO FAST-FOOD */}
+                <button 
+                    onClick={toggleAutoDeliver} 
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${autoDeliver ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}
+                    title={autoDeliver ? "Fluxo Restaurante: Pagamento encerra pedido" : "Fluxo Fast-Food: Pagamento mantém pedido na tela"}
+                >
+                    {autoDeliver ? <Utensils size={14}/> : <Zap size={14}/>} 
+                    {autoDeliver ? 'Modo Restaurante' : 'Modo Fast-Food'}
+                </button>
+            </div>
           </div>
         )}
 
@@ -593,7 +671,10 @@ export function Vendas() {
 
             {isRestaurantMode && (
                <div className="flex justify-between text-sm items-center mt-1">
-                 <button onClick={() => setIncludeServiceFee(!includeServiceFee)} className={`text-xs px-2 py-0.5 rounded border transition-colors ${includeServiceFee ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>Taxa Serviço (10%)</button>
+                 {/* BOTÃO ATUALIZADO: LÊ A TAXA DO ESTADO */}
+                 <button onClick={() => setIncludeServiceFee(!includeServiceFee)} className={`text-xs px-2 py-0.5 rounded border transition-colors ${includeServiceFee ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                    Taxa Serviço ({companyInfo?.service_fee || 10}%)
+                 </button>
                  <span className={includeServiceFee ? "text-green-600 font-bold" : "text-slate-300 line-through"}>R$ {serviceFeeValue.toFixed(2)}</span>
                </div>
             )}
@@ -627,16 +708,19 @@ export function Vendas() {
                     <FileText size={20} />
                  </button>
 
-                 <button 
-                    onClick={handleSendOrder}
-                    disabled={isProcessing || cart.length === 0}
-                    className={`flex-1 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${useKDS ? 'bg-amber-500 hover:bg-amber-600' : 'bg-slate-700 hover:bg-slate-800'}`}
-                 >
-                    <div className="flex items-center text-sm">
-                        {useKDS ? <ChefHat size={16} className="mr-1"/> : <Printer size={16} className="mr-1"/>} 
-                        {useKDS ? 'Enviar' : 'Imprimir'}
-                    </div>
-                 </button>
+                 {/* BOTÃO ENVIAR (SÓ APARECE SE NÃO FOR FAST-FOOD) */}
+                 {autoDeliver && (
+                   <button 
+                      onClick={handleSendOrder}
+                      disabled={isProcessing || cart.length === 0}
+                      className={`flex-1 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${useKDS ? 'bg-amber-500 hover:bg-amber-600' : 'bg-slate-700 hover:bg-slate-800'}`}
+                   >
+                      <div className="flex items-center text-sm">
+                          {useKDS ? <ChefHat size={16} className="mr-1"/> : <Printer size={16} className="mr-1"/>} 
+                          {useKDS ? 'Enviar' : 'Imprimir'}
+                      </div>
+                   </button>
+                 )}
               </div>
             )}
           </div>
