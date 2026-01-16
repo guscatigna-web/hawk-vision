@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat, LogOut, ClipboardCheck, FileBarChart, Bell, UtensilsCrossed } from 'lucide-react'
+import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat, LogOut, ClipboardCheck, FileBarChart, Bell, UtensilsCrossed, KanbanSquare } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
@@ -107,6 +107,7 @@ export function AppLayout() {
           {isManager && (
             <div className="pt-4 mt-4 border-t border-slate-800">
                <NavItem to="/configuracoes" icon={<Settings size={20}/>} label="Configurações" />
+               <NavItem to="/ifood" icon={<KanbanSquare size={20}/>} label="Ifood" />
             </div>
           )}
         </nav>

@@ -14,51 +14,87 @@ Este arquivo contém o contexto técnico, estrutura de dados e regras de negóci
 
 ---
 
-## 🗄️ Estrutura do Banco de Dados (Supabase)
+## 🗄️ Estrutura do Banco de Dados (Real)
 
-### 1. `products` (Catálogo)
-- `id` (uuid): PK
-- `name` (text): Nome do produto
-- `price` (numeric): Preço de venda
-- `category` (text): Categoria (ex: Lanches, Bebidas)
-- `active` (bool): Se aparece no PDV
-- `track_stock` (bool): Se movimenta estoque
-- `stock_quantity` (numeric): Quantidade atual
-- `destination` (text): 'cozinha' | 'bar' | 'nenhum' (Define para qual KDS o item vai)
-- `barcode` (text): Código de barras/EAN
+Baseado no Schema Dump de 15/01/2026.
 
-### 2. `sales` (Cabeçalho de Venda/Pedido)
-- `id` (uuid): PK
-- `created_at` (timestamp)
-- `customer_name` (text): Nome do cliente ou "Mesa X" ou "Varejo"
-- `status` (text): 'aberto' | 'preparando' | 'pronto' | 'concluido' | 'cancelado'
-- `total` (numeric): Valor total da venda
-- `payment_method` (text): 'dinheiro' | 'credito' | 'debito' | 'pix'
-- `cashier_session_id` (uuid): FK para `cashier_sessions`
-- `employee_id` (uuid): FK para `profiles` (quem vendeu)
+### 👥 Pessoas & Acesso
+- **`companies`** (Multi-tenant)
+  - `id` (bigint): PK
+  - `name`, `cnpj`
+- **`employees`** (Funcionários/Usuários)
+  - `id` (bigint): PK
+  - `company_id` (bigint): FK
+  - `name`, `email`, `role` (admin/manager/cashier/kitchen)
+  - `pin` (text): Senha numérica para PDV
+- **`customers`**
+  - `id` (bigint): PK
+  - `name`, `phone`, `cpf`, `email`
+- **`suppliers`**
+  - `id` (bigint): PK
+  - `name`, `contact_name`, `phone`
 
-### 3. `sale_items` (Itens da Venda)
-- `id` (uuid): PK
-- `sale_id` (uuid): FK `sales`
-- `product_id` (uuid): FK `products`
-- `quantity` (numeric)
-- `unit_price` (numeric): Preço no momento da venda
+### 📦 Catálogo & Estoque
+- **`categories`**
+  - `id` (bigint): PK
+  - `name` (text), `type` (text)
+- **`products`**
+  - `id` (bigint): PK
+  - `name` (text), `price` (numeric), `cost_price` (numeric)
+  - `category_id` (bigint): FK
+  - `destination` (text): 'kitchen' | 'bar' | null (Define para qual tela KDS vai)
+  - `track_stock` (bool): Se controla estoque
+  - `stock_quantity` (numeric): Quantidade atual
+  - `barcode` (text): EAN
+- **`recipes`** (Ficha Técnica)
+  - `product_id` (bigint): Produto pai
+  - `ingredient_id` (bigint): Produto filho (ingrediente)
+  - `quantity`: Quanto gasta do ingrediente
+- **`stock_movements`**
+  - `type`: 'in' (entrada) | 'out' (saída/venda) | 'adjustment' (correção)
 
-### 4. `cashier_sessions` (Sessões de Caixa)
-- `id` (uuid): PK
-- `opened_at` (timestamp): Abertura
-- `closed_at` (timestamp): Fechamento (null se aberto)
-- `initial_amount` (numeric): Fundo de troco
-- `closing_amount` (numeric): Valor conferido no fechamento
-- `status` (text): 'open' | 'closed'
-- `type` (text): 'normal' | 'express' (Express não aceita dinheiro/troco)
+### 💰 Vendas & Caixa
+- **`cashier_sessions`** (Sessões de Caixa)
+  - `id` (bigint): PK
+  - `employee_id` (bigint): Quem abriu
+  - `opened_at`, `closed_at`
+  - `initial_balance`, `final_balance`
+  - `status`: 'open' | 'closed'
+- **`sales`** (Cabeçalho do Pedido)
+  - `id` (bigint): PK
+  - `company_id` (bigint)
+  - `channel`: 'Balcão' | 'iFood' | 'Mesa'
+  - `status`: 'aberto' | 'concluido' | 'cancelado'
+  - `total` (numeric), `discount_value` (numeric)
+  - `ifood_order_id` (text): ID externo para evitar duplicidade
+  - `customer_name` (text)
+- **`sale_items`** (Itens do Pedido)
+  - `id` (bigint): PK
+  - `sale_id` (bigint): FK
+  - `product_id` (bigint): FK
+  - `product_name` (text): Snapshot do nome (Vital para iFood/KDS)
+  - `quantity`, `unit_price`, `total`
+  - `destination`: Para roteamento KDS
+- **`sale_payments`**
+  - `payment_method`: 'credit' | 'debit' | 'money' | 'pix' | 'ifood'
 
-### 5. `financial_transactions` (Livro Caixa)
-- `id` (uuid): PK
-- `type` (text): 'entrada' (venda/suprimento) | 'saida' (sangria/despesa)
-- `amount` (numeric)
-- `description` (text)
-- `category` (text): 'venda', 'suprimento', 'sangria', etc.
+### 🛵 Integração iFood (Arquitetura "Device Flow")
+- **`integrations_ifood`** (Tabela de Sessão)
+  - `company_id` (bigint): FK
+  - `merchant_id` (text): ID da loja no iFood
+  - `access_token` (text): Token JWT
+  - `refresh_token` (text): Token para renovação
+  - `temp_verifier` (text): Armazena o `code_verifier` durante o fluxo de login
+  - `status`: 'CONNECTED' | 'DISCONNECTED'
+- **`ifood_menu_mapping`** (De-Para de Produtos)
+  - `ifood_product_id` (text): ID no iFood
+  - `erp_product_id` (bigint): ID no Hawk Vision
+  - `ifood_product_name` (text): Nome original no iFood
+
+### ⚙️ Configurações & Fiscal
+- **`company_settings`**
+  - Dados da empresa (Endereço, Cores do sistema)
+  - Dados Fiscais: `cnpj`, `ie`, `crt`, `csc_token`, `csc_id`
 
 ---
 
@@ -94,7 +130,23 @@ Este arquivo contém o contexto técnico, estrutura de dados e regras de negóci
 3.  **Estoque:** Baixa de estoque ocorre apenas no fechamento da conta (`concluido`).
 
 ---
+## 📍 Roadmap de Integração (Reboot)
 
+### Fase 1: Fundação (Atual)
+- [x] Limpeza do Banco de Dados (Remoção de tabelas experimentais).
+- [x] Mapeamento do Schema Real (BigInt vs UUID).
+- [ ] Restaurar funcionalidade básica do PDV com a estrutura atual.
+
+### Fase 2: Conexão iFood
+- [ ] Restaurar Edge Function `ifood-auth` (ou `ifood-order-poller`) usando a estrutura `integrations_ifood` já existente.
+- [ ] Implementar fluxo: Frontend pede Código -> Usuário Autoriza -> Frontend envia Código -> Backend troca e salva em `integrations_ifood`.
+
+### Fase 3: Operação
+- [ ] Polling de pedidos via Edge Function.
+- [ ] Inserção em `sales` com `channel='iFood'`.
+- [ ] Visualização no Gestor de Pedidos e KDS.
+
+---
 ## 📍 Status Atual do Projeto (Roadmap)
 
 - ✅ **Etapa 0 (Técnico):** `dateUtils.js` implementado.
