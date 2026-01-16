@@ -1,19 +1,24 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat, LogOut, ClipboardCheck, FileBarChart, Bell, UtensilsCrossed, KanbanSquare } from 'lucide-react'
+import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat, LogOut, ClipboardCheck, Bell, KanbanSquare, Crown, LayoutGrid, UtensilsCrossed } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
-// --- NOVO: Import do Simulador ---
+// Componentes iFood
 import { IfoodSimulator } from '../components/IfoodSimulator'
+import { IfoodPolling } from '../components/IfoodPolling'
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
   const [pendingCount, setPendingCount] = useState(0)
 
-  // Verifica pendências periodicamente (Polling simples)
+  // Permissões: Gerente e Master veem o menu completo
+  const isManager = user?.role === 'Gerente' || user?.role === 'Master';
+  const isMaster = user?.role === 'Master';
+
+  // Verifica notificações/pendências (Polling)
   useEffect(() => {
-    if (user?.role === 'Gerente') {
+    if (isManager) {
       const checkPending = async () => {
         const { count } = await supabase
           .from('pending_actions')
@@ -22,94 +27,76 @@ export function AppLayout() {
         setPendingCount(count || 0)
       }
       checkPending()
-      const interval = setInterval(checkPending, 10000) // Checa a cada 10s
+      const interval = setInterval(checkPending, 10000) 
       return () => clearInterval(interval)
     }
-  }, [user])
+  }, [isManager])
 
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  const isManager = user.role === 'Gerente';
-  const isKitchen = user.role === 'Cozinha';
-  const isService = user.role === 'Caixa' || user.role === 'Garçom';
+  if (!user) return <Navigate to="/login" />
 
   return (
-    <div className="flex h-screen w-full bg-slate-50">
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col transition-all duration-300 print:hidden">
-        
-        <div className="h-20 flex items-center px-6 border-b border-slate-800">
-          <ChefHat className="w-8 h-8 text-blue-500 mr-2" />
+    <div className="flex h-screen bg-slate-50">
+      {/* Sidebar */}
+      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col print:hidden">
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div>
-            <span className="text-lg font-bold text-white block leading-none">Hawk Vision</span>
-            <span className="text-xs text-slate-500 font-medium">{user.role}</span>
+            <h1 className="text-white font-bold text-lg">Hawk Vision</h1>
+            <p className="text-xs text-slate-500">Sistema de Gestão</p>
+          </div>
+          {/* Badge do Usuário */}
+          <div className="flex flex-col items-end">
+             <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase border ${isMaster ? 'text-amber-400 border-amber-400' : 'text-slate-400 border-slate-600'}`}>
+                {user.role || '...'}
+             </span>
           </div>
         </div>
 
-        <nav className="flex-1 px-2 py-6 space-y-1 overflow-y-auto">
-          
-          {/* --- NOTIFICAÇÕES (SÓ GERENTE) --- */}
-          {isManager && (
-            <NavLink 
-              to="/notificacoes" 
-              className={({ isActive }) => 
-                `flex items-center justify-between px-4 py-3 rounded-lg transition-all mb-4 ${
-                  isActive ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`
-              }
-            >
-              <div className="flex items-center">
-                <Bell size={20} />
-                <span className="ml-3 font-medium">Notificações</span>
-              </div>
-              {pendingCount > 0 && (
-                <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full animate-pulse">
-                  {pendingCount}
-                </span>
-              )}
-            </NavLink>
-          )}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+            {/* MENU PRINCIPAL */}
+            {isManager && (
+              <>
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 pl-2">Gestão</p>
+                  <NavItem to="/" icon={<LayoutDashboard size={20}/>} label="Dashboard" />
+                  <NavItem to="/vendas" icon={<ShoppingCart size={20}/>} label="Vendas / PDV" />
+                  <NavItem to="/pedidos" icon={<ClipboardCheck size={20}/>} label="Pedidos" />
+                  
+                  {/* Caminhos Corrigidos */}
+                  <NavItem to="/mesas" icon={<LayoutGrid size={20}/>} label="Gestão de Mesas" />
+                  <NavItem to="/cozinha" icon={<ChefHat size={20}/>} label="KDS Cozinha" />
+                  <NavItem to="/bar" icon={<Beer size={20}/>} label="KDS Bar" />
+                </div>
 
-          {isManager && (
-            <>
-              <NavItem to="/" icon={<LayoutDashboard size={20}/>} label="Dashboard" />
-              <NavItem to="/relatorios" icon={<FileBarChart size={20}/>} label="Relatórios" />
-            </>
-          )}
-          
-          {/* --- ÁREA DE VENDAS --- */}
-          {(isManager || isService) && (
-            <>
-              <NavItem to="/vendas" icon={<ShoppingCart size={20}/>} label="Caixa Rápido" />
-              <NavItem to="/mesas" icon={<UtensilsCrossed size={20}/>} label="Restaurante" />
-            </>
-          )}
-          
-          {/* --- ÁREA OPERACIONAL --- */}
-          {(isManager || isKitchen) && (
-             <>
-                <NavItem to="/cozinha" icon={<ChefHat size={20}/>} label="KDS Cozinha" />
-                <NavItem to="/bar" icon={<Beer size={20}/>} label="KDS Bar" />
-               <NavItem to="/estoque" icon={<Package size={20}/>} label="Estoque" />
-               <NavItem to="/inventario" icon={<ClipboardCheck size={20}/>} label="Inventário" />
-             </>
-          )}
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 pl-2">Cadastros</p>
+                  
+                  {/* Renomeado para Inventário e apontando para /inventario */}
+                  <NavItem to="/inventario" icon={<Package size={20}/>} label="Inventário" />
+                  
+                  {/* Apontando para /estoque (Mantido caso seja diferente de inventário) */}
+                  <NavItem to="/estoque" icon={<UtensilsCrossed size={20}/>} label="Estoque (Insumos)" />
+                  
+                  {/* Renomeado para Equipe e apontando para /equipe */}
+                  <NavItem to="/equipe" icon={<Users size={20}/>} label="Equipe" />
+                  
+                  {/* Apontando para /notificacoes */}
+                  <NavItem to="/notificacoes" icon={<Bell size={20}/>} label={`Notificações ${pendingCount > 0 ? `(${pendingCount})` : ''}`} highlight={pendingCount > 0} />
+                </div>
 
-          {/* --- EQUIPE --- */}
-          {isManager && (
-            <>
-              <NavItem to="/equipe" icon={<Users size={20}/>} label="Equipe" />
-            </>
-          )}
+                {/* ITEM EXCLUSIVO MASTER */}
+                {isMaster && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-wider mb-2 pl-2">Admin</p>
+                      <NavItem to="/master-admin" icon={<Crown size={20} className="text-amber-400"/>} label="Painel Master" />
+                    </div>
+                )}
 
-          {/* --- CONFIGURAÇÕES --- */}
-          {isManager && (
-            <div className="pt-4 mt-4 border-t border-slate-800">
-               <NavItem to="/configuracoes" icon={<Settings size={20}/>} label="Configurações" />
-               <NavItem to="/ifood" icon={<KanbanSquare size={20}/>} label="Ifood" />
-            </div>
-          )}
+                <div className="pt-4 mt-4 border-t border-slate-800">
+                   <NavItem to="/configuracoes" icon={<Settings size={20}/>} label="Configurações" />
+                   <NavItem to="/config/ifood" icon={<KanbanSquare size={20}/>} label="Ifood Config" />
+                </div>
+              </>
+            )}
         </nav>
 
         <div className="p-4 border-t border-slate-800">
@@ -124,28 +111,30 @@ export function AppLayout() {
           <Outlet />
         </div>
 
-        {/* --- SIMULADOR DE IFOOD (FLUTUANTE) --- */}
         <IfoodSimulator />
+        <IfoodPolling />
         
       </main>
     </div>
   )
 }
 
-function NavItem({ to, icon, label }) {
+function NavItem({ to, icon, label, highlight }) {
   return (
     <NavLink 
       to={to} 
       className={({ isActive }) => 
-        `flex items-center px-4 py-3 rounded-lg transition-all ${
+        `flex items-center px-3 py-2.5 mb-1 text-sm font-medium rounded-lg transition-colors ${
           isActive 
-            ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20" 
-            : "hover:bg-slate-800 hover:text-white"
+            ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' 
+            : highlight 
+              ? 'text-amber-400 hover:bg-slate-800'
+              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
         }`
       }
     >
-      {icon}
-      <span className="ml-3 font-medium">{label}</span>
+      <span className="mr-3">{icon}</span>
+      {label}
     </NavLink>
   )
 }

@@ -23,7 +23,6 @@ import { Notificacoes } from './pages/Notificacoes'
 import { Cozinha } from './pages/Cozinha'
 import { Bar } from './pages/Bar'
 import IfoodConfig from './pages/IfoodConfig';
-import IfoodMenu from './pages/IfoodMenu';
 
 export default function App() {
   return (
@@ -39,7 +38,6 @@ export default function App() {
             
             {/* Rota Secreta (Criação de Clientes) */}
             <Route path="/master-admin" element={<SuperAdmin />} />
-            
 
             {/* Rotas Protegidas (Layout Principal com Menu) */}
             <Route path="/" element={<AppLayout />}>
@@ -52,8 +50,7 @@ export default function App() {
               <Route path="relatorios" element={<Relatorios />} />
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="configuracoes" element={<Configuracoes />} />
-              <Route path="ifood" element={<IfoodConfig />} />
-              <Route path="/config/ifood/cardapio" element={<IfoodMenu />} />
+              <Route path="/config/ifood" element={<IfoodConfig />} />
               
               {/* KDS */}
               <Route path="cozinha" element={<Cozinha />} />

@@ -33,64 +33,86 @@ export function CashierProvider({ children }) {
     }
   }
 
-  // ABRIR CAIXA
+  // ABRIR CAIXA (Lógica Híbrida: Aceita ID Numérico ou UUID)
   async function openCashier(initialBalance, type = 'normal') {
     try {
+      if (!user?.id) throw new Error("Usuário não autenticado.")
+
+      // 1. Determina qual coluna buscar baseado no formato do ID que o Frontend mandou
+      // Se for apenas números, busca na coluna 'id'. Se tiver letras/traços, busca em 'auth_user_id'
+      const userIdStr = String(user.id);
+      const isNumericId = /^\d+$/.test(userIdStr); 
+      const searchColumn = isNumericId ? 'id' : 'auth_user_id';
+
+      console.log(`🔍 Buscando funcionário. Input: "${userIdStr}" -> Coluna Alvo: "${searchColumn}"`);
+
+      // 2. Busca o funcionário
+      const { data: employee, error: empError } = await supabase
+        .from('employees')
+        .select('id, company_id, role')
+        .eq(searchColumn, userIdStr) // <--- Aqui está a correção mágica
+        .maybeSingle()
+
+      if (empError) {
+        console.error("Erro SQL Busca Funcionário:", empError)
+        throw new Error("Erro técnico ao buscar cadastro do funcionário.")
+      }
+
+      if (!employee) {
+        throw new Error(`Funcionário não encontrado (ID: ${userIdStr}). Verifique o cadastro na tabela employees.`)
+      }
+      
+      if (!employee.company_id) {
+        throw new Error("Seu perfil não está vinculado a nenhuma empresa.")
+      }
+
+      // 3. Abre o caixa
+      // IMPORTANTE: Sempre usamos employee.id (o numérico do banco) para salvar na sessão
       const { data, error } = await supabase
         .from('cashier_sessions')
         .insert({
-          employee_id: user.id,
+          employee_id: employee.id,    
+          company_id: employee.company_id, 
           initial_balance: parseFloat(initialBalance),
           status: 'open',
-          type: type,
-          opened_at: new Date().toISOString() 
+          opened_at: new Date().toISOString(),
+          type: type
         })
         .select()
         .single()
 
       if (error) throw error
-      
+
       setCurrentSession(data)
-      toast.success(type === 'express' ? 'Caixa Expresso Aberto! 🚀' : 'Caixa aberto com sucesso!')
+      toast.success('Caixa aberto com sucesso!')
       return true
     } catch (error) {
-      console.error(error)
-      toast.error('Erro ao abrir caixa.')
+      console.error('Erro ao abrir caixa:', error)
+      toast.error(error.message)
       return false
     }
   }
 
   // FECHAR CAIXA
-  async function closeCashier(finalBalance, notes) {
+  async function closeCashier(finalData) {
     if (!currentSession) return
 
     try {
-      const { data: transactions } = await supabase
-        .from('financial_transactions')
-        .select('amount, type')
-        .eq('cashier_session_id', currentSession.id)
-        .eq('payment_method', 'dinheiro') 
-
-      const movementSum = transactions?.reduce((acc, t) => acc + t.amount, 0) || 0
-      const systemCalc = currentSession.initial_balance + movementSum
-      const diff = parseFloat(finalBalance) - systemCalc
-
       const { error } = await supabase
         .from('cashier_sessions')
         .update({
-          closed_at: new Date().toISOString(),
-          final_balance: parseFloat(finalBalance),
-          system_balance: systemCalc,
-          difference: diff,
           status: 'closed',
-          notes: notes
+          closed_at: new Date().toISOString(),
+          final_balance: parseFloat(finalData.closingAmount),
+          notes: finalData.notes,
+          difference: parseFloat(finalData.closingAmount) - (currentSession.system_balance || 0)
         })
         .eq('id', currentSession.id)
 
       if (error) throw error
 
       setCurrentSession(null)
-      toast.success(`Caixa fechado! Diferença: R$ ${diff.toFixed(2)}`)
+      toast.success('Caixa encerrado.')
       return true
     } catch (error) {
       console.error(error)
@@ -99,89 +121,86 @@ export function CashierProvider({ children }) {
     }
   }
 
-  // REGISTRAR MOVIMENTAÇÃO
-  async function addTransaction(type, amount, description, paymentMethod = 'dinheiro') {
-    if (!currentSession && type !== 'despesa') {
-      toast.error('Caixa fechado! Abra o caixa para movimentar dinheiro.')
+  // ADICIONAR MOVIMENTAÇÃO
+  async function addTransaction(type, amount, description) {
+    if (!currentSession) {
+      toast.error('Nenhum caixa aberto.')
       return false
     }
 
     try {
-      const finalAmount = (type === 'sangria' || type === 'despesa' || type === 'estorno') ? -Math.abs(amount) : Math.abs(amount)
-
-      const { error } = await supabase.from('financial_transactions').insert({
-        cashier_session_id: currentSession?.id || null, 
-        type,
-        amount: finalAmount,
-        description,
-        payment_method: paymentMethod,
-        created_by: user.id
-      })
+      const { error } = await supabase
+        .from('cashier_transactions')
+        .insert({
+          session_id: currentSession.id,
+          type,
+          amount: parseFloat(amount),
+          description,
+          created_at: new Date().toISOString()
+        })
 
       if (error) throw error
-      toast.success('Transação registrada.')
+      
+      toast.success('Movimentação registrada.')
       return true
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao registrar transação.')
+      toast.error('Erro ao salvar movimentação.')
       return false
     }
   }
 
-  // --- NOVA FUNÇÃO: CANCELAR VENDA (ESTORNO COMPLETO) ---
+  // CANCELAR VENDA
   async function cancelSale(saleId, reason) {
-    if (!currentSession) return false
-
     try {
-      // 1. Busca dados da venda e itens para devolver estoque
-      const { data: sale, error: saleError } = await supabase
+      // Busca dados do funcionário atual (Híbrido também, para garantir)
+      const userIdStr = String(user.id);
+      const isNumericId = /^\d+$/.test(userIdStr); 
+      const searchColumn = isNumericId ? 'id' : 'auth_user_id';
+      
+      const { data: currentEmp } = await supabase
+        .from('employees')
+        .select('id')
+        .eq(searchColumn, userIdStr)
+        .single();
+
+      // 1. Atualiza Venda
+      const { error: saleError } = await supabase
         .from('sales')
-        .select('*, sale_items(*, product:products(*))')
+        .update({ 
+            status: 'cancelado',
+            notes: reason ? `Cancelado: ${reason}` : 'Cancelado pelo operador'
+        })
+        .eq('id', saleId)
+
+      if (saleError) throw saleError
+
+      // 2. Busca itens e estorna
+      const { data: sale } = await supabase
+        .from('sales')
+        .select(`*, sale_items (quantity, product_id, product:products (stock_quantity, track_stock))`)
         .eq('id', saleId)
         .single()
-      
-      if (saleError) throw saleError
-      if (sale.status === 'cancelado') {
-        toast.error('Esta venda já foi cancelada.')
-        return false
-      }
 
-      // 2. Atualiza status da venda
-      await supabase.from('sales')
-        .update({ status: 'cancelado' })
-        .eq('id', saleId)
-
-      // 3. Registra Estorno Financeiro (Valor Negativo no Caixa)
-      await addTransaction(
-        'estorno', 
-        sale.total, 
-        `Canc. Venda #${sale.id.toString().slice(0,4)} - ${reason}`, 
-        sale.payment_method
-      )
-
-      // 4. Devolve Estoque (Loop Inteligente)
-      // Nota: Idealmente faríamos isso via RPC no banco para ser atômico, 
-      // mas faremos via código aqui para manter simplicidade no setup atual.
       if (sale.sale_items && sale.sale_items.length > 0) {
         for (const item of sale.sale_items) {
-          // Se o produto controla estoque, devolvemos
-          if (item.product.track_stock) {
+          if (item.product?.track_stock) {
              const newStock = item.product.stock_quantity + item.quantity
              
-             // Atualiza produto
              await supabase.from('products')
                .update({ stock_quantity: newStock })
                .eq('id', item.product_id)
 
-             // Registra movimento de entrada (Devolução)
              await supabase.from('stock_movements').insert({
                 product_id: item.product_id,
-                employee_id: user.id,
+                company_id: sale.company_id,
+                employee_id: currentEmp?.id, // ID Numérico correto
                 type: 'entrada',
-                reason: 'devolucao',
+                reason: 'devolucao_venda',
                 quantity: item.quantity,
                 old_stock: item.product.stock_quantity,
-                new_stock: newStock
+                new_stock: newStock,
+                created_at: new Date().toISOString()
              })
           }
         }
