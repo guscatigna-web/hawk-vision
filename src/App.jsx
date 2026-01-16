@@ -10,6 +10,7 @@ import { AppLayout } from './layouts/AppLayout'
 import { Login } from './pages/Login'
 import { SuperAdmin } from './pages/SuperAdmin' // Página Secreta
 
+import Pedidos from './pages/Pedidos'
 import { Dashboard } from './pages/Dashboard'
 import { Vendas } from './pages/Vendas'
 import { Mesas } from './pages/Mesas'
@@ -51,6 +52,7 @@ export default function App() {
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="configuracoes" element={<Configuracoes />} />
               <Route path="/config/ifood" element={<IfoodConfig />} />
+              <Route path="/pedidos" element={<Pedidos />} />
               
               {/* KDS */}
               <Route path="cozinha" element={<Cozinha />} />
