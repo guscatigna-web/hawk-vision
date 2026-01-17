@@ -104,11 +104,10 @@ serve(async (req) => {
     }
 
     // ==================================================================
-    // ROTA 4: POLLING (AQUI ESTÁ A ATUALIZAÇÃO IMPORTANTE)
+    // ROTA 4: POLLING - CORREÇÃO DE CAIXA E HORA
     // ==================================================================
     if (req.method === "POST" && pathname.endsWith("/polling")) {
       const { companyId } = await req.json();
-      console.log(`🔎 [Polling] Iniciando para empresa ${companyId}...`);
 
       const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
       if (!integration) throw new Error("Integração não encontrada.");
@@ -121,7 +120,6 @@ serve(async (req) => {
       });
 
       if (eventsRes.status === 401) {
-        console.log("⚠️ Token expirado. Tentando refresh...");
         token = await refreshIfoodToken(integration.refresh_token, companyId);
         eventsRes = await fetch(`${IFOOD_API_URL}/order/v1.0/events:polling`, {
           headers: { "Authorization": `Bearer ${token}` }
@@ -129,16 +127,12 @@ serve(async (req) => {
       }
 
       if (eventsRes.status === 204) {
-        // console.log("💤 Sem eventos.");
         return new Response(JSON.stringify({ message: "Nenhum evento", orders: [] }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
       }
 
       const events = await eventsRes.json();
       const newOrders = [];
       const eventsToAck = [];
-      
-      console.log(`🔥 [Polling] RECEBIDOS ${events.length} EVENTOS!`);
-      // console.log("Payload:", JSON.stringify(events)); // Debug detalhado se precisar
 
       // 2. Mapeamento de Produtos
       const { data: mappings } = await supabaseAdmin
@@ -151,28 +145,32 @@ serve(async (req) => {
         if (m.erp_product_id) productMap.set(m.ifood_product_id, m.erp_product_id);
       });
 
-      // 3. Busca de Caixa
+      // 3. BUSCA DE CAIXA (CORRIGIDA)
       const numericCompanyId = Number(companyId);
+
+      console.log(`🔎 Buscando caixa aberto para empresa ID: ${numericCompanyId}...`);
+
       const { data: openSession, error: sessionError } = await supabaseAdmin
         .from('cashier_sessions')
         .select('id')
         .eq('company_id', numericCompanyId)
         .eq('status', 'open')
-        .order('opened_at', { ascending: false })
+        .order('opened_at', { ascending: false }) // Pega o mais recente
         .limit(1)
         .maybeSingle();
 
+      if (sessionError) {
+          console.error("Erro ao buscar caixa:", sessionError);
+      }
+
       const sessionId = openSession?.id || null;
-      if (!sessionId) console.log("⚠️ Nenhum caixa aberto encontrado.");
+      console.log(`💡 ID Caixa encontrado: ${sessionId}`);
 
       // 4. Processa Eventos
       for (const event of events) {
-        const orderId = event.orderId;
-        const code = event.code;
-        console.log(`👉 Processando evento: ${code} | Pedido: ${orderId}`);
+        if (event.code === 'PLC') {
+          const orderId = event.orderId;
 
-        // --- A: PEDIDO NOVO (PLC) ---
-        if (code === 'PLC') {
           const { data: existingSale } = await supabaseAdmin
             .from('sales')
             .select('id')
@@ -180,7 +178,7 @@ serve(async (req) => {
             .maybeSingle();
 
           if (existingSale) {
-            console.log(`⚠️ Pedido ${orderId} já existe. Ignorando.`);
+            console.log(`⚠️ Pedido ${orderId} duplicado ignorado.`);
           } else {
             const orderRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${orderId}`, {
               headers: { "Authorization": `Bearer ${token}` }
@@ -188,22 +186,24 @@ serve(async (req) => {
             
             if (orderRes.ok) {
               const orderData = await orderRes.json();
+
+              // CORREÇÃO DE DATA: Usa horário do servidor
               const serverTime = new Date().toISOString();
 
+              // A) Salva Venda
               try {
-                // Insere Venda
                 const { data: insertedSale, error: saleError } = await supabaseAdmin
                   .from('sales')
                   .insert({
                     company_id: numericCompanyId,
                     customer_name: orderData.customer.name,
-                    status: 'PENDING', // Status Inicial
+                    status: 'PENDING',
                     total: orderData.total.value,
                     channel: 'IFOOD',
                     ifood_order_id: orderId,
-                    created_at: serverTime,
+                    created_at: serverTime, // <--- HORA CORRIGIDA
                     payment_method: 'ifood',
-                    cashier_session_id: sessionId
+                    cashier_session_id: sessionId // <--- CAIXA
                   })
                   .select()
                   .single();
@@ -214,7 +214,7 @@ serve(async (req) => {
                    newOrders.push(insertedSale);
                    const saleId = insertedSale.id;
 
-                   // Insere Itens
+                   // B) Salva ITENS
                    if (orderData.items && orderData.items.length > 0) {
                      const itemsToInsert = [];
                      for (const ifoodItem of orderData.items) {
@@ -234,37 +234,32 @@ serve(async (req) => {
                      }
                    }
                 }
+
               } catch (err: any) {
-                if (err.code === '23505') console.log(`⚠️ Duplicidade bloqueada pelo banco.`);
-                else console.error("❌ Erro ao salvar venda:", err);
+                if (err.code === '23505' || err.message?.includes('unique_ifood_order')) {
+                  console.log(`⚠️ Pedido duplicado bloqueado.`);
+                } else {
+                  console.error("Erro venda:", err);
+                }
               }
             }
           }
         }
         
-        // --- B: ATUALIZAÇÃO DE STATUS (NOVO!) ---
-        else if (['CFM', 'DSP', 'CON', 'CAN'].includes(code)) {
+        // --- ATUALIZAÇÃO REVERSA (iFood -> Hawk) ---
+        else if (['CFM', 'DSP', 'CON', 'CAN'].includes(event.code)) {
             let newStatus = null;
-            
-            // Mapeamento iFood -> Hawk Vision
-            if (code === 'CFM') newStatus = 'Em Preparo';      // Confirmed
-            else if (code === 'DSP') newStatus = 'Saiu para entrega'; // Dispatched
-            else if (code === 'CON') newStatus = 'Concluido';  // Concluded
-            else if (code === 'CAN') newStatus = 'Cancelado';  // Cancelled
+            if (event.code === 'CFM') newStatus = 'Em Preparo';
+            else if (event.code === 'DSP') newStatus = 'Saiu para entrega';
+            else if (event.code === 'CON') newStatus = 'Concluido';
+            else if (event.code === 'CAN') newStatus = 'Cancelado';
 
             if (newStatus) {
-                console.log(`🔄 Atualizando status do pedido ${orderId} para "${newStatus}"`);
-                
-                const { error: updateError } = await supabaseAdmin
+                console.log(`🔄 iFood -> Hawk: Pedido ${event.orderId} mudou para "${newStatus}"`);
+                await supabaseAdmin
                     .from('sales')
                     .update({ status: newStatus })
-                    .eq('ifood_order_id', orderId);
-
-                if (updateError) {
-                    console.error(`❌ Erro update banco:`, updateError);
-                } else {
-                    console.log(`✅ Status atualizado com sucesso.`);
-                }
+                    .eq('ifood_order_id', event.orderId);
             }
         }
 
@@ -277,7 +272,6 @@ serve(async (req) => {
           headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify(eventsToAck)
         });
-        console.log(`🧹 ACK enviado para ${eventsToAck.length} eventos.`);
       }
 
       return new Response(JSON.stringify({ 
@@ -286,10 +280,60 @@ serve(async (req) => {
       }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
     }
 
+    // ==================================================================
+    // ROTA 5: UPDATE STATUS (Hawk -> iFood)  <--- NOVA FUNCIONALIDADE
+    // ==================================================================
+    if (req.method === "POST" && pathname.endsWith("/update-status")) {
+        const { companyId, ifoodOrderId, status } = await req.json();
+        console.log(`📡 [UpdateStatus] Hawk -> iFood. Pedido: ${ifoodOrderId}, Status Alvo: ${status}`);
+
+        const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
+        if (!integration) throw new Error("Integração não encontrada.");
+        
+        let token = integration.access_token;
+        
+        // Mapeia Status do Hawk para os endpoints específicos do iFood
+        let endpoint = "";
+        if (status === "Em Preparo") endpoint = "confirm";       // Hawk "Em Preparo" -> iFood "Confirmar"
+        else if (status === "Saiu para entrega") endpoint = "dispatch"; // Hawk "Saiu" -> iFood "Despachar"
+        // else if (status === "Concluido") endpoint = "readyToPickup"; // Opcional, depende da logística
+        
+        // Se tivermos um endpoint correspondente, chamamos o iFood
+        if (endpoint) {
+             let ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            // Se der 401, tenta renovar e chamar de novo
+            if (ifoodRes.status === 401) {
+                console.log("⚠️ Token expirado no update. Renovando...");
+                token = await refreshIfoodToken(integration.refresh_token, companyId);
+                ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+            }
+            
+            if (!ifoodRes.ok) {
+                 // Apenas logamos o erro, mas não impedimos a atualização local (Otimista)
+                 // Ex: O pedido já podia estar confirmado no iFood
+                 const txt = await ifoodRes.text();
+                 console.error(`Erro iFood (${endpoint}):`, txt);
+            } else {
+                 console.log(`✅ Sucesso no iFood: ${endpoint}`);
+            }
+        }
+        
+        // Sempre atualiza o banco local do Hawk para refletir a mudança na tela
+        await supabaseAdmin.from('sales').update({ status: status }).eq('ifood_order_id', ifoodOrderId);
+
+        return new Response(JSON.stringify({ success: true }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
+    }
+
     return new Response(JSON.stringify({ error: "Rota inexistente" }), { status: 404, headers: CORSA_HEADERS });
 
   } catch (err: any) {
-    console.error("🔥 Erro Fatal na Edge Function:", err.message);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500, headers: { ...CORSA_HEADERS, "Content-Type": "application/json" }
     });

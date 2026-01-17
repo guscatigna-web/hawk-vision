@@ -1,140 +1,217 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2 } from 'lucide-react'
+import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertCircle, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function Pedidos() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [audioEnabled, setAudioEnabled] = useState(false)
+  const [cashierStatus, setCashierStatus] = useState('checking')
+  const [errorMsg, setErrorMsg] = useState(null)
+  
+  const { user } = useAuth()
+  const [processingId, setProcessingId] = useState(null)
 
-  // Status mapeados
   const columns = {
     pending: { label: '🔔 Pendentes', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
     preparing: { label: '👨‍🍳 Em Preparo', color: 'bg-blue-100 border-blue-300 text-blue-800' },
     delivery: { label: '🛵 Em Entrega', color: 'bg-indigo-100 border-indigo-300 text-indigo-800' },
     completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' },
-    // Mantive a coluna debug por segurança, mas agora deve ficar vazia
     debug: { label: '❓ Status Desconhecido', color: 'bg-gray-100 border-gray-300 text-gray-800' }
   }
 
-  useEffect(() => {
-    fetchOrders()
+  // Função Auxiliar: Descobre qual coluna usar baseado no formato do ID
+  const getSearchColumn = (userId) => {
+    // Se for UUID (ex: 'e77ed205-...') busca em auth_user_id
+    // Se for Número (ex: 10 ou '10') busca em id
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    return isUUID ? 'auth_user_id' : 'id';
+  }
 
-    const channel = supabase
-      .channel('sales-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, (payload) => {
-         console.log("⚡ Mudança Real-time:", payload)
-         fetchOrders()
-      })
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [])
-
-  async function fetchOrders() {
+  const fetchOrders = useCallback(async () => {
     try {
-      // Mantive sem filtro de data para você continuar vendo os testes
+      if (!user) return;
+      setErrorMsg(null);
+
+      // 1. Identificar Empresa do Usuário (Busca Dinâmica)
+      let companyId = null;
+
+      // Define se busca por 'id' ou 'auth_user_id'
+      const searchCol = getSearchColumn(user.id);
+      
+      const { data: emp, error: empError } = await supabase
+        .from('employees')
+        .select('company_id')
+        .eq(searchCol, user.id) // <--- CORREÇÃO AQUI
+        .maybeSingle();
+
+      if (empError) {
+          console.warn(`Erro ao buscar funcionário via ${searchCol}:`, empError.message);
+      } else if (emp) {
+          companyId = emp.company_id;
+      }
+
+      // Fallback: Tenta pegar dos metadados se a query falhar
+      if (!companyId && user.user_metadata?.company_id) {
+          companyId = user.user_metadata.company_id;
+      }
+
+      if (!companyId) {
+          setLoading(false);
+          setErrorMsg("Empresa não vinculada a este usuário.");
+          return;
+      }
+
+      // 2. Buscar CAIXA ABERTO
+      const { data: session, error: sessionError } = await supabase
+        .from('cashier_sessions')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('status', 'open')
+        .maybeSingle()
+
+      if (sessionError) console.error('Erro session:', sessionError)
+
+      // Se não tem caixa aberto
+      if (!session) {
+        setOrders([])
+        setCashierStatus('closed')
+        setLoading(false)
+        return
+      }
+
+      setCashierStatus('open')
+
+      // 3. Buscar Vendas do Caixa Atual
       const { data, error } = await supabase
         .from('sales')
-        .select(`
-          *,
-          sale_items (
-            quantity,
-            unit_price,
-            product:products(name)
-          )
-        `)
+        .select(`*, sale_items (quantity, unit_price, product:products(name))`)
+        .eq('cashier_session_id', session.id)
         .order('created_at', { ascending: false })
-        .limit(50)
 
       if (error) throw error
       setOrders(data || [])
+
     } catch (error) {
-      console.error('Erro ao buscar pedidos:', error)
+      console.error('Erro Geral fetchOrders:', error)
+      toast.error('Erro ao carregar lista')
     } finally {
       setLoading(false)
     }
-  }
+  }, [user])
+
+  useEffect(() => {
+    fetchOrders()
+    const channel = supabase.channel('sales-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => { 
+          fetchOrders() 
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchOrders])
 
   const enableAudio = () => {
     const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-    audio.play().then(() => {
-        toast.success("Som Ativado!")
-        setAudioEnabled(true)
-    }).catch(e => {
-        console.error("Erro audio:", e)
-        toast.error("Erro ao ativar som")
-    })
+    audio.play().then(() => { toast.success("Som Ativado!"); setAudioEnabled(true); }).catch(e => console.error(e));
   }
 
-  async function handleStatusChange(orderId, newStatus) {
-    try {
-      const { error } = await supabase
-        .from('sales')
-        .update({ status: newStatus })
-        .eq('id', orderId)
+  async function handleStatusChange(order, newStatus) {
+    if (processingId) return; 
+    setProcessingId(order.id);
+    const toastId = toast.loading("Processando...");
 
-      if (error) throw error
-      
-      toast.success(`Movido para: ${newStatus}`)
-      fetchOrders()
+    try {
+        // Busca Company ID novamente para garantir segurança
+        const searchCol = getSearchColumn(user.id);
+        const { data: emp } = await supabase
+            .from('employees')
+            .select('company_id')
+            .eq(searchCol, user.id) // <--- CORREÇÃO AQUI TAMBÉM
+            .single();
+        
+        const currentCompanyId = emp?.company_id || user.user_metadata?.company_id;
+
+        if (!currentCompanyId) throw new Error("Empresa não identificada.");
+
+        // Lógica iFood vs Local
+        if (order.channel === 'IFOOD' && order.ifood_order_id) {
+            const { error } = await supabase.functions.invoke('ifood-proxy/update-status', {
+                body: { 
+                    companyId: currentCompanyId,
+                    ifoodOrderId: order.ifood_order_id,
+                    status: newStatus
+                }
+            });
+            if (error) throw error;
+            toast.success(`iFood atualizado: ${newStatus}`, { id: toastId });
+        } else {
+            const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', order.id);
+            if (error) throw error;
+            toast.success(`Movido para: ${newStatus}`, { id: toastId });
+        }
+        
+        fetchOrders(); // Atualiza a tela
 
     } catch (error) {
-      console.error(error)
-      toast.error('Erro ao atualizar status')
+        console.error(error);
+        toast.error('Erro ao atualizar status', { id: toastId });
+    } finally {
+        setProcessingId(null);
     }
   }
 
-  // --- AQUI ESTAVA O SEGREDO ---
   const getColumnOrders = (columnKey) => {
     return orders.filter(o => {
       const s = (o.status || '').toLowerCase().trim()
-      
-      // 1. Pendentes (Adicionado 'pending')
-      if (columnKey === 'pending') {
-        return ['pendente', 'placed', 'plc', 'pending', 'new'].includes(s)
-      }
-      
-      // 2. Preparo (Adicionado 'preparing')
-      if (columnKey === 'preparing') {
-        return ['em preparo', 'confirmed', 'cfm', 'preparando', 'preparing'].includes(s)
-      }
-      
-      // 3. Entrega (Adicionado 'ready_to_pickup' e 'delivery')
-      if (columnKey === 'delivery') {
-        return ['saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup'].includes(s)
-      }
-      
-      // 4. Concluído
-      if (columnKey === 'completed') {
-        return ['concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s)
-      }
-      
-      // 5. Debug (Pega o que sobrar)
+      if (columnKey === 'pending') return ['pendente', 'placed', 'plc', 'pending', 'new'].includes(s)
+      if (columnKey === 'preparing') return ['em preparo', 'confirmed', 'cfm', 'preparando', 'preparing'].includes(s)
+      if (columnKey === 'delivery') return ['saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup'].includes(s)
+      if (columnKey === 'completed') return ['concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s)
       if (columnKey === 'debug') {
-        const allKnown = [
-            'pendente', 'placed', 'plc', 'pending', 'new',
-            'em preparo', 'confirmed', 'cfm', 'preparando', 'preparing',
-            'saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup',
-            'concluido', 'concluded', 'con', 'entregue', 'completed',
-            'cancelado', 'cancelled' // Ignora cancelados na tela
-        ]
-        // Retorna true se NÃO estiver na lista de conhecidos (e não for cancelado)
+        const allKnown = ['pendente', 'placed', 'plc', 'pending', 'new','em preparo', 'confirmed', 'cfm', 'preparando', 'preparing','saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup','concluido', 'concluded', 'con', 'entregue', 'completed','cancelado', 'cancelled']
         return !allKnown.includes(s) && !['cancelado', 'cancelled'].includes(s)
       }
       return false
     })
   }
 
-  if (loading) return <div className="p-8 text-center">Carregando pedidos...</div>
+  if (loading) return <div className="p-8 text-center">Carregando painel...</div>
+
+  // Tela de Erro (Se não achar empresa)
+  if (errorMsg) {
+      return (
+          <div className="h-[calc(100vh-4rem)] flex flex-col items-center justify-center text-red-500">
+              <AlertCircle size={64} className="mb-4" />
+              <h2 className="text-xl font-bold">Erro de Configuração</h2>
+              <p className="text-sm mt-2">{errorMsg}</p>
+              <p className="text-xs text-slate-400 mt-4">ID do Usuário: {user?.id}</p>
+          </div>
+      )
+  }
+
+  // Tela de Caixa Fechado
+  if (cashierStatus === 'closed') {
+      return (
+          <div className="h-[calc(100vh-4rem)] flex flex-col items-center justify-center text-slate-400">
+              <Ban size={64} className="mb-4 text-slate-300" />
+              <h2 className="text-xl font-bold text-slate-600">Caixa Fechado</h2>
+              <p className="text-sm">Abra o caixa para visualizar e receber novos pedidos.</p>
+          </div>
+      )
+  }
 
   return (
     <div className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-slate-800">Gerenciador de Pedidos</h1>
-        
+        <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-slate-800">Gerenciador de Pedidos</h1>
+            <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full border border-green-200 flex items-center gap-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div> Caixa Aberto
+            </span>
+        </div>
         <div className="flex gap-2">
             {!audioEnabled && (
                 <button onClick={enableAudio} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2 transition-colors">
@@ -149,87 +226,62 @@ export default function Pedidos() {
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden">
         <div className="flex gap-4 h-full min-w-[1200px]">
-          
           {Object.entries(columns).map(([key, col]) => (
             <div key={key} className={`flex-1 flex flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
               <div className="p-3 border-b border-black/5 font-bold flex justify-between items-center">
                 <span className={col.color.split(' ')[2]}>{col.label}</span>
-                <span className="bg-white/50 px-2 py-0.5 rounded text-xs text-black/60 font-mono">
-                  {getColumnOrders(key).length}
-                </span>
+                <span className="bg-white/50 px-2 py-0.5 rounded text-xs text-black/60 font-mono">{getColumnOrders(key).length}</span>
               </div>
-
               <div className="p-2 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
                 {getColumnOrders(key).map(order => (
                   <OrderCard 
                     key={order.id} 
                     order={order} 
                     currentStatus={key}
+                    isProcessing={processingId === order.id}
                     onNext={() => {
-                        if(key === 'pending') handleStatusChange(order.id, 'Em Preparo')
-                        if(key === 'preparing') handleStatusChange(order.id, 'Saiu para entrega')
-                        if(key === 'delivery') handleStatusChange(order.id, 'Concluido')
+                        if(key === 'pending') handleStatusChange(order, 'Em Preparo')
+                        if(key === 'preparing') handleStatusChange(order, 'Saiu para entrega')
+                        if(key === 'delivery') handleStatusChange(order, 'Concluido')
                     }}
                     onView={() => setSelectedOrder(order)}
                   />
                 ))}
+                {getColumnOrders(key).length === 0 && <div className="h-full flex items-center justify-center text-black/20 italic text-sm">Vazio</div>}
               </div>
             </div>
           ))}
-
         </div>
       </div>
-
-      {selectedOrder && (
-        <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
-      )}
+      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />}
     </div>
   )
 }
 
-function OrderCard({ order, onNext, onView, currentStatus }) {
+function OrderCard({ order, onNext, onView, currentStatus, isProcessing }) {
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
     const showStatusLabel = currentStatus === 'debug'
-
     return (
-        <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow cursor-pointer relative group">
+        <div className={`bg-white p-3 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow cursor-pointer relative group ${isProcessing ? 'opacity-70' : ''}`}>
             <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-1">
                     <span className="font-bold text-slate-800">#{order.display_id || String(order.id).slice(0,4)}</span>
                     {isIfood && <img src="https://cdn.icon-icons.com/icons2/2699/PNG/512/ifood_logo_icon_170304.png" className="w-4 h-4" alt="iFood"/>}
                 </div>
-                <span className="text-xs text-slate-500 flex items-center gap-1">
-                    <Clock size={12}/> {time}
-                </span>
+                <span className="text-xs text-slate-500 flex items-center gap-1"><Clock size={12}/> {time}</span>
             </div>
-
-            {showStatusLabel && (
-                <div className="mb-2 text-xs font-mono bg-red-100 text-red-700 px-1 py-0.5 rounded">
-                    Status: "{order.status}"
-                </div>
-            )}
-
-            <div className="text-sm font-medium text-slate-700 truncate mb-2">
-                {order.customer_name || 'Cliente Balcão'}
-            </div>
-
-            <div className="text-xs text-slate-500 mb-3 line-clamp-2">
-                {order.sale_items?.map(i => `${i.quantity}x ${i.product?.name}`).join(', ')}
-            </div>
-
+            {showStatusLabel && <div className="mb-2 text-xs font-mono bg-red-100 text-red-700 px-1 py-0.5 rounded">Status: "{order.status}"</div>}
+            <div className="text-sm font-medium text-slate-700 truncate mb-2">{order.customer_name || 'Cliente Balcão'}</div>
+            <div className="text-xs text-slate-500 mb-3 line-clamp-2">{order.sale_items?.map(i => `${i.quantity}x ${i.product?.name}`).join(', ')}</div>
+            {order.sale_items?.some(i => !i.product) && <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1 rounded mb-2 w-fit"><AlertTriangle size={10} /> Item s/ vínculo</div>}
             <div className="flex justify-between items-center border-t border-slate-100 pt-2">
                 <span className="font-bold text-green-700">R$ {Number(order.total).toFixed(2)}</span>
                 <div className="flex gap-2">
-                    <button onClick={onView} className="p-1.5 text-slate-400 hover:bg-slate-50 rounded" title="Ver Detalhes">
-                        <Receipt size={16}/>
-                    </button>
+                    <button onClick={onView} className="p-1.5 text-slate-400 hover:bg-slate-50 rounded"><Receipt size={16}/></button>
                     {currentStatus !== 'completed' && currentStatus !== 'debug' && (
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); onNext(); }}
-                            className="bg-slate-900 text-white p-1.5 rounded hover:bg-slate-700 transition-colors flex items-center gap-1 text-xs px-2"
-                        >
-                            <ChevronRight size={14}/>
+                        <button disabled={isProcessing} onClick={(e) => { e.stopPropagation(); onNext(); }} className="bg-slate-900 text-white p-1.5 rounded hover:bg-slate-700 transition-colors flex items-center gap-1 text-xs px-2 disabled:bg-slate-400">
+                            {isProcessing ? '...' : <ChevronRight size={14}/>}
                         </button>
                     )}
                 </div>
@@ -257,7 +309,7 @@ function OrderModal({ order, onClose }) {
                             <div key={idx} className="flex justify-between items-center border-b border-slate-100 pb-2">
                                 <div className="flex gap-3">
                                     <span className="font-bold text-slate-900 bg-slate-100 px-2 rounded">{item.quantity}x</span>
-                                    <span className="text-slate-700">{item.product?.name || 'Item não vinculado'}</span>
+                                    <span className="text-slate-700">{item.product?.name || <span className="text-red-500 italic">Produto ERP não vinculado</span>}</span>
                                 </div>
                                 <span className="font-medium text-slate-600">R$ {(item.unit_price * item.quantity).toFixed(2)}</span>
                             </div>
