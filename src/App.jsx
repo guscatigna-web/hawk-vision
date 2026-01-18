@@ -11,7 +11,7 @@ import { Login } from './pages/Login'
 import { SuperAdmin } from './pages/SuperAdmin' // Página Secreta
 
 import Pedidos from './pages/Pedidos'
-import { Dashboard } from './pages/Dashboard'
+import Dashboard from './pages/Dashboard'
 import { Vendas } from './pages/Vendas'
 import { Mesas } from './pages/Mesas'
 import { Estoque } from './pages/Estoque'

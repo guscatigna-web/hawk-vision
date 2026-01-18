@@ -39,7 +39,6 @@ export function CashierProvider({ children }) {
       if (!user?.id) throw new Error("Usuário não autenticado.")
 
       // 1. Determina qual coluna buscar baseado no formato do ID que o Frontend mandou
-      // Se for apenas números, busca na coluna 'id'. Se tiver letras/traços, busca em 'auth_user_id'
       const userIdStr = String(user.id);
       const isNumericId = /^\d+$/.test(userIdStr); 
       const searchColumn = isNumericId ? 'id' : 'auth_user_id';
@@ -50,7 +49,7 @@ export function CashierProvider({ children }) {
       const { data: employee, error: empError } = await supabase
         .from('employees')
         .select('id, company_id, role')
-        .eq(searchColumn, userIdStr) // <--- Aqui está a correção mágica
+        .eq(searchColumn, userIdStr) 
         .maybeSingle()
 
       if (empError) {
@@ -67,7 +66,6 @@ export function CashierProvider({ children }) {
       }
 
       // 3. Abre o caixa
-      // IMPORTANTE: Sempre usamos employee.id (o numérico do banco) para salvar na sessão
       const { data, error } = await supabase
         .from('cashier_sessions')
         .insert({
@@ -121,30 +119,36 @@ export function CashierProvider({ children }) {
     }
   }
 
-  // ADICIONAR MOVIMENTAÇÃO
-  async function addTransaction(type, amount, description) {
+  // ADICIONAR MOVIMENTAÇÃO (CORRIGIDO)
+  // Aceita o 4º argumento paymentMethod para compatibilidade com Vendas.jsx
+  async function addTransaction(type, amount, description, paymentMethod = null) {
     if (!currentSession) {
       toast.error('Nenhum caixa aberto.')
       return false
     }
 
     try {
+      const payload = {
+        session_id: currentSession.id,
+        company_id: currentSession.company_id, // <--- CORREÇÃO CRÍTICA: ID DA EMPRESA
+        type,
+        amount: parseFloat(amount),
+        description,
+        created_at: new Date().toISOString()
+      };
+
+       if (paymentMethod) payload.payment_method = paymentMethod;
+
       const { error } = await supabase
         .from('cashier_transactions')
-        .insert({
-          session_id: currentSession.id,
-          type,
-          amount: parseFloat(amount),
-          description,
-          created_at: new Date().toISOString()
-        })
+        .insert(payload)
 
       if (error) throw error
       
       toast.success('Movimentação registrada.')
       return true
     } catch (error) {
-      console.error(error)
+      console.error('Erro addTransaction:', error)
       toast.error('Erro ao salvar movimentação.')
       return false
     }

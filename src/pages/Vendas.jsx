@@ -25,8 +25,7 @@ export function Vendas() {
   const tableNumberParam = searchParams.get('mesa')
   const saleIdParam = searchParams.get('saleId')
   const isRestaurantMode = !!tableNumberParam
-  const isExpressSession = currentSession?.type === 'express'
-
+  
   // --- CONFIGURAÇÕES DE FLUXO ---
   const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
   const [autoDeliver, setAutoDeliver] = useState(() => {
@@ -99,14 +98,18 @@ export function Vendas() {
   useEffect(() => {
     async function fetchData() {
       try {
-        // 1. Busca Company ID do usuário logado (CRUCIAL PARA O FIX)
-        if (user?.email) {
-            const { data: empData } = await supabase
+        // 1. Busca Company ID de forma ROBUSTA (Igual ao Dashboard)
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+            const { data: emp } = await supabase
                 .from('employees')
                 .select('company_id')
-                .eq('email', user.email)
-                .single()
-            if (empData) setCompanyId(empData.company_id)
+                .eq('auth_user_id', currentUser.id)
+                .maybeSingle();
+            
+            // Tenta pegar do employee, se não, tenta metadata (fallback)
+            const id = emp?.company_id || currentUser.user_metadata?.company_id;
+            if (id) setCompanyId(id);
         }
 
         const { data: prodData } = await supabase.from('products').select('*, categories(name)').eq('type', 'sale').order('name')
@@ -250,7 +253,7 @@ export function Vendas() {
       let activeId = currentSaleId
       if (!activeId) {
         const { data: newSale, error } = await supabase.from('sales').insert({
-            company_id: companyId, // <--- FIX 403
+            company_id: companyId,
             employee_id: user.id, 
             customer_name: customerName || 'Balcão', 
             table_number: tableNumberParam ? parseInt(tableNumberParam) : null, 
@@ -266,10 +269,10 @@ export function Vendas() {
 
       const initialStatus = useKDS ? 'pending' : 'delivered' 
       const itemsToInsert = cart.map(item => ({
-        company_id: companyId, // <--- FIX 403
+        company_id: companyId,
         sale_id: activeId, 
         product_id: item.product.id, 
-        product_name: item.product.name, // GARANTINDO O NOME
+        product_name: item.product.name,
         quantity: item.quantity, 
         unit_price: item.product.price, 
         total: item.quantity * item.product.price,
@@ -297,18 +300,19 @@ export function Vendas() {
     } catch (error) { console.error(error); toast.error("Erro ao enviar: " + error.message) } finally { setIsProcessing(false) }
   }
 
-  // --- LÓGICA DE PAGAMENTO PERSISTENTE (CORRIGIDO COM COMPANY_ID) ---
+  // --- LÓGICA DE PAGAMENTO PERSISTENTE ---
   const handleAddPayment = async (method, amount) => {
     if (!currentSession) return toast.error("Caixa Fechado.")
-    if (!companyId) return toast.error("Erro de identificação da empresa.")
+    if (!companyId) return toast.error("Erro de identificação da empresa. Recarregue.")
 
     setIsProcessing(true)
     try {
         let activeId = currentSaleId
 
+        // Se não houver venda criada, cria agora (Varejo)
         if (!activeId) {
             const { data: newSale, error } = await supabase.from('sales').insert({
-                company_id: companyId, // <--- FIX 403
+                company_id: companyId, // Correção do erro de DB
                 employee_id: user.id, 
                 customer_name: customerName || 'Varejo', 
                 status: 'aberto', 
@@ -323,7 +327,7 @@ export function Vendas() {
             if (cart.length > 0) {
                 const initialStatus = useKDS ? 'pending' : 'delivered' 
                 const itemsToInsert = cart.map(item => ({ 
-                    company_id: companyId, // <--- FIX 403
+                    company_id: companyId,
                     sale_id: activeId, 
                     product_id: item.product.id, 
                     product_name: item.product.name,
@@ -338,7 +342,7 @@ export function Vendas() {
         }
 
         await supabase.from('sale_payments').insert({
-            company_id: companyId, // <--- FIX 403
+            company_id: companyId,
             sale_id: activeId,
             payment_method: method,
             amount: parseFloat(amount)
@@ -351,7 +355,7 @@ export function Vendas() {
 
     } catch (error) {
         console.error(error)
-        toast.error("Erro ao registrar pagamento.")
+        toast.error("Erro ao registrar pagamento: " + error.message)
     } finally {
         setIsProcessing(false)
     }
@@ -563,7 +567,6 @@ export function Vendas() {
                     {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS' : 'Print'}
                 </button>
 
-                {/* BOTÃO FLUXO RESTAURADO: MODO RESTAURANTE vs MODO FAST-FOOD */}
                 <button 
                     onClick={toggleAutoDeliver} 
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${autoDeliver ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}
@@ -690,7 +693,6 @@ export function Vendas() {
 
             {isRestaurantMode && (
                <div className="flex justify-between text-sm items-center mt-1">
-                 {/* BOTÃO ATUALIZADO: LÊ A TAXA DO ESTADO */}
                  <button onClick={() => setIncludeServiceFee(!includeServiceFee)} className={`text-xs px-2 py-0.5 rounded border transition-colors ${includeServiceFee ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
                     Taxa Serviço ({companyInfo?.service_fee || 10}%)
                  </button>
@@ -707,8 +709,8 @@ export function Vendas() {
           <div className="grid grid-cols-1 gap-2 mb-4">
             <button 
               onClick={() => setIsPaymentModalOpen(true)}
-              disabled={isExpressSession && cart.length === 0} 
-              className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2 active:scale-95 transition-all"
+              disabled={cart.length === 0 && existingItems.length === 0} 
+              className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Wallet size={24}/>
               REALIZAR PAGAMENTO
