@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react' // <--- useRef removido
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -27,14 +27,11 @@ export default function Pedidos() {
     debug: { label: '❓ Status Desconhecido', color: 'bg-gray-100 border-gray-300 text-gray-800' }
   }
 
-// Effect para disparar a impressão
+  // Effect para disparar a impressão
   useEffect(() => {
     if (printData && printTrigger > 0) {
-        // Aumentei para 500ms para garantir que o navegador desenhou o ticket
         const timer = setTimeout(() => { 
             window.print(); 
-            // Opcional: Limpar dados depois de imprimir, ou manter para reimpressão
-            // setPrintData(null); 
         }, 500);
         return () => clearTimeout(timer);
     }
@@ -45,6 +42,7 @@ export default function Pedidos() {
     return isUUID ? 'auth_user_id' : 'id';
   }
 
+  // --- ALTERAÇÃO SOLICITADA: FILTRO BALA DE PRATA ---
   const fetchOrders = useCallback(async () => {
     try {
       if (!user) return;
@@ -52,7 +50,6 @@ export default function Pedidos() {
       let companyId = null;
       const searchCol = getSearchColumn(user.id);
       
-      // Removido empError pois não estávamos usando
       const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
       if (emp) companyId = emp.company_id;
       
@@ -66,18 +63,36 @@ export default function Pedidos() {
       }
 
       const { data: session } = await supabase.from('cashier_sessions').select('id').eq('company_id', companyId).eq('status', 'open').maybeSingle();
+      if (!session) { setCashierStatus('closed'); } 
+      else { setCashierStatus('open'); }
 
-      if (!session) { setOrders([]); setCashierStatus('closed'); setLoading(false); return; }
-      setCashierStatus('open');
+      // 1. Busca Ampla (Sem filtros restritivos de SQL para evitar conflitos)
+      // Pega as últimas 48h para garantir segurança
+      const windowDate = new Date();
+      windowDate.setDate(windowDate.getDate() - 2); 
+      const windowISO = windowDate.toISOString();
 
       const { data, error } = await supabase
         .from('sales')
         .select(`*, sale_items (quantity, unit_price, product:products(name, category_id))`)
-        .eq('cashier_session_id', session.id)
-        .order('created_at', { ascending: false });
+        .eq('company_id', companyId)
+        .gte('created_at', windowISO)
+        .neq('status', 'cancelado')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
       if (error) throw error;
-      setOrders(data || []);
+
+      // 2. Filtro Bala de Prata (JavaScript)
+      // Mantém apenas o que tem canal IFOOD ou ID de iFood preenchido
+      const cleanOrders = (data || []).filter(order => {
+          const channel = (order.channel || '').toUpperCase();
+          const ifoodId = order.ifood_order_id || '';
+          
+          return channel.includes('IFOOD') || (ifoodId.length > 5);
+      });
+
+      setOrders(cleanOrders);
 
     } catch (error) {
       console.error(error);
@@ -134,17 +149,24 @@ export default function Pedidos() {
         const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).single();
         const currentCompanyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
 
+        // Atualiza status no iFood via Edge Function (Código Original Preservado)
         if (order.channel === 'IFOOD' && order.ifood_order_id) {
             const { error } = await supabase.functions.invoke('ifood-proxy/update-status', {
-                body: { companyId: currentCompanyId, ifoodOrderId: order.ifood_order_id, status: newStatus }
+                body: { 
+                    companyId: currentCompanyId, 
+                    ifoodOrderId: order.ifood_order_id, 
+                    status: newStatus 
+                }
             });
             if (error) throw error;
             toast.success(`iFood: ${newStatus}`, { id: toastId });
-        } else {
-            const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', order.id);
-            if (error) throw error;
-            toast.success(`Movido para: ${newStatus}`, { id: toastId });
-        }
+        } 
+        
+        // Atualiza banco local
+        const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', order.id);
+        if (error) throw error;
+        
+        if (order.channel !== 'IFOOD') toast.success(`Movido para: ${newStatus}`, { id: toastId });
         
         if (newStatus === 'Em Preparo') handlePrint(order);
         fetchOrders(); 
@@ -156,12 +178,14 @@ export default function Pedidos() {
     }
   }
 
+  // Agrupamento de colunas original
   const getColumnOrders = (key) => orders.filter(o => {
       const s = (o.status || '').toLowerCase().trim();
-      if (key === 'pending') return ['pendente', 'placed', 'plc', 'pending', 'new'].includes(s);
+      if (key === 'pending') return ['pendente', 'placed', 'plc', 'pending', 'new', 'aberto'].includes(s);
       if (key === 'preparing') return ['em preparo', 'confirmed', 'cfm', 'preparando', 'preparing'].includes(s);
       if (key === 'delivery') return ['saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup'].includes(s);
       if (key === 'completed') return ['concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s);
+      if (key === 'debug') return !['pendente', 'placed', 'plc', 'pending', 'new', 'aberto', 'em preparo', 'confirmed', 'cfm', 'preparando', 'preparing', 'saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup', 'concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s);
       return false;
   });
 
