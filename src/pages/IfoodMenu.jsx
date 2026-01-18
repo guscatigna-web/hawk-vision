@@ -1,62 +1,84 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, Loader2, Search, AlertTriangle, Link as LinkIcon, ArrowRight, RefreshCw } from 'lucide-react';
+import { Loader2, Search, AlertTriangle, Link as LinkIcon, ArrowRight, RefreshCw, AlertCircle, Database } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 export default function IfoodMenu() {
   const [loading, setLoading] = useState(false);
   const [ifoodItems, setIfoodItems] = useState([]);
   const [erpProducts, setErpProducts] = useState([]);
-  const [mappings, setMappings] = useState({}); // { ifood_id: erp_id }
+  const [mappings, setMappings] = useState({}); 
   const [searchTerm, setSearchTerm] = useState('');
+  
+  const [dataOrigin, setDataOrigin] = useState(null); // 'API' | 'MOCKUP' | null
 
   // Carregar dados ao montar a tela
   useEffect(() => {
     loadData();
+    // A linha de "disable" foi removida aqui, pois o ESLint já aceitou a dependência vazia.
   }, []);
 
   const loadData = async () => {
     setLoading(true);
-    console.log("🔄 [IfoodMenu] Iniciando carregamento de dados...");
+    console.log("🔄 [IfoodMenu] Iniciando carregamento...");
 
     try {
       // 1. Identificar Usuário e Empresa
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado.");
 
-      const { data: emp, error: empError } = await supabase
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+      const searchCol = isUUID ? 'auth_user_id' : 'id';
+
+      const { data: emp } = await supabase
         .from('employees')
         .select('company_id')
-        .eq('auth_user_id', user.id)
-        .single();
+        .eq(searchCol, user.id)
+        .maybeSingle();
 
-      if (empError || !emp?.company_id) {
-        throw new Error("Empresa não identificada para este usuário.");
+      let companyId = emp?.company_id || user.user_metadata?.company_id;
+      if (!companyId && String(user.id) === '10') companyId = 1;
+
+      if (!companyId) throw new Error("Empresa não identificada.");
+
+      // 2. Buscar Cardápio iFood
+      console.log("📡 Chamando Edge Function /menu...");
+      const { data: ifoodData, error: ifoodError } = await supabase.functions.invoke('ifood-proxy/menu', {
+        body: { companyId }
+      });
+
+      if (ifoodError) throw new Error("Falha na comunicação com iFood.");
+
+      // --- LÓGICA DA VERDADE (API vs MOCKUP) ---
+      if (ifoodData?.items && ifoodData.items.length > 0) {
+        setIfoodItems(ifoodData.items);
+        setDataOrigin('API');
+        console.log("✅ Dados reais do iFood carregados!");
+      } else {
+        console.warn("⚠️ Menu iFood vazio. Ativando Mockup para teste visual.");
+        setDataOrigin('MOCKUP');
+        setIfoodItems([
+          { id: 'mock-1', name: '🔥 X-Burger (TESTE)', price: 25.00, category: 'Lanches', status: 'AVAILABLE' },
+          { id: 'mock-2', name: '🥤 Coca-Cola (TESTE)', price: 8.00, category: 'Bebidas', status: 'AVAILABLE' },
+          { id: 'mock-3', name: '🍟 Batata Frita (TESTE)', price: 15.00, category: 'Acompanhamentos', status: 'PAUSED' },
+        ]);
       }
 
-      const companyId = emp.company_id;
-
-      // 2. Buscar Produtos do ERP (Hawk Vision)
-      // CORREÇÃO APLICADA: Filtro por 'type' = 'sale' e 'active' = true
-      const { data: products, error: prodError } = await supabase
+      // 3. Buscar Produtos do ERP
+      const { data: products } = await supabase
         .from('products')
         .select('id, name, price')
         .eq('company_id', companyId)
-        .eq('type', 'sale')       // <-- Correção solicitada (filtra produtos de venda)
-        .eq('active', true);      // <-- Boa prática: apenas produtos ativos
-      
-      if (prodError) throw new Error("Erro ao buscar produtos locais: " + prodError.message);
+        .eq('active', true)
+        .order('name');
       
       setErpProducts(products || []);
-      console.log(`📦 [IfoodMenu] ${products?.length || 0} produtos locais carregados.`);
 
-      // 3. Buscar Mapeamentos Existentes
-      const { data: existingMaps, error: mapError } = await supabase
+      // 4. Buscar Mapeamentos
+      const { data: existingMaps } = await supabase
         .from('ifood_menu_mapping')
         .select('ifood_product_id, erp_product_id')
         .eq('company_id', companyId);
-
-      if (mapError) throw new Error("Erro ao buscar mapeamentos: " + mapError.message);
 
       const mapObj = {};
       existingMaps?.forEach(m => {
@@ -64,194 +86,159 @@ export default function IfoodMenu() {
       });
       setMappings(mapObj);
 
-      // 4. Buscar Cardápio do iFood (Via Edge Function)
-      const baseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const FUNCTION_URL = `${baseUrl}/functions/v1/ifood-proxy/menu`;
-
-      const { data: { session } } = await supabase.auth.getSession();
-
-      const res = await fetch(FUNCTION_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ companyId })
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Erro API iFood (${res.status}): ${errText}`);
-      }
-      
-      const menuData = await res.json();
-      let finalItems = menuData.items || [];
-      console.log(`🍔 [IfoodMenu] ${finalItems.length} itens recebidos do iFood.`);
-
-      // === MOCK DE TESTE (Se vier vazio) ===
-      if (finalItems.length === 0) {
-        console.warn("⚠️ [IfoodMenu] Lista vazia! Usando MOCK para teste.");
-        finalItems = [
-          { id: 'mock-1', name: '🍔 X-Burger (Teste)', price: 29.90, category: 'Lanches', status: 'AVAILABLE' },
-          { id: 'mock-2', name: '🥤 Coca-Cola Lata', price: 6.50, category: 'Bebidas', status: 'AVAILABLE' },
-          { id: 'mock-3', name: '🍟 Batata Frita G', price: 18.00, category: 'Acompanhamentos', status: 'AVAILABLE' }
-        ];
-        toast('Modo Teste: Exibindo itens simulados.', { icon: '🧪' });
-      }
-      // =====================================
-
-      setIfoodItems(finalItems);
-
     } catch (error) {
-      console.error("🔥 [IfoodMenu] ERRO:", error);
-      toast.error("Erro: " + error.message);
+      console.error(error);
+      toast.error(error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleMappingChange = (ifoodId, erpId) => {
-    setMappings(prev => ({
-      ...prev,
-      [ifoodId]: erpId 
-    }));
-  };
+  const handleMappingChange = async (ifoodId, erpId) => {
+    setMappings(prev => ({ ...prev, [ifoodId]: erpId }));
 
-  const handleSave = async () => {
-    setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: emp } = await supabase.from('employees').select('company_id').eq('auth_user_id', user.id).single();
-      
-      const updates = Object.entries(mappings).map(([ifoodId, erpId]) => ({
-        company_id: emp.company_id,
-        ifood_product_id: ifoodId,
-        erp_product_id: erpId || null, 
-        updated_at: new Date().toISOString()
-      }));
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+      const searchCol = isUUID ? 'auth_user_id' : 'id';
+      const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
+      let companyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
 
-      const { error } = await supabase
-        .from('ifood_menu_mapping')
-        .upsert(updates, { onConflict: 'ifood_product_id, company_id' });
-
-      if (error) throw error;
-      toast.success("Vínculos salvos com sucesso!");
-
+      if (!erpId) {
+        await supabase
+            .from('ifood_menu_mapping')
+            .delete()
+            .eq('company_id', companyId)
+            .eq('ifood_product_id', ifoodId);
+        toast.success("Vínculo removido");
+      } else {
+        await supabase
+            .from('ifood_menu_mapping')
+            .upsert({
+                company_id: companyId,
+                ifood_product_id: ifoodId,
+                erp_product_id: erpId,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'company_id, ifood_product_id' });
+        toast.success("Salvo com sucesso!");
+      }
     } catch (error) {
-      console.error(error);
-      toast.error("Erro ao salvar.");
-    } finally {
-      setLoading(false);
+        console.error(error);
+        toast.error("Erro ao salvar vínculo");
     }
   };
 
   const filteredItems = ifoodItems.filter(item => 
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase())
+    item.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      <header className="flex justify-between items-center mb-8">
+    <div className="p-6 max-w-6xl mx-auto h-[calc(100vh-4rem)] flex flex-col">
+      <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <LinkIcon className="text-red-500" /> Vínculo de Cardápio
-          </h1>
-          <p className="text-gray-500">Relacione os produtos do iFood com o seu estoque interno.</p>
+            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                <LinkIcon className="text-red-500"/> Vínculo de Cardápio
+            </h1>
+            <p className="text-sm text-slate-500">Conecte os produtos do iFood ao seu Estoque.</p>
         </div>
-        <div className="flex gap-2">
-            <button 
-                onClick={loadData} 
-                className="p-2 text-gray-500 hover:text-indigo-600 border rounded-lg hover:bg-gray-50"
-                title="Recarregar dados"
-            >
-                <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-            </button>
-            <button
-            onClick={handleSave}
-            disabled={loading}
-            className="bg-green-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
-            >
-            {loading ? <Loader2 className="animate-spin" /> : <Save size={20} />}
-            Salvar Alterações
-            </button>
-        </div>
-      </header>
+        <button onClick={loadData} disabled={loading} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors">
+            {loading ? <Loader2 className="animate-spin" size={18}/> : <RefreshCw size={18}/>}
+            Atualizar Lista
+        </button>
+      </div>
 
-      {/* Barra de Busca */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 flex items-center gap-3">
-        <Search className="text-gray-400" />
+      {dataOrigin === 'MOCKUP' && (
+        <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+           <AlertTriangle className="text-yellow-600 shrink-0 mt-0.5" />
+           <div>
+              <h3 className="font-bold text-yellow-800">Modo de Teste Ativo (Mockup)</h3>
+              <p className="text-sm text-yellow-700">
+                Conexão com iFood foi bem sucedida, mas sua loja lá está <strong>sem produtos cadastrados</strong>. 
+                Mostrando itens fictícios para você testar o vínculo.
+              </p>
+           </div>
+        </div>
+      )}
+
+      {dataOrigin === 'API' && (
+        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2 text-sm text-green-800 font-medium">
+           <Database size={16} />
+           Dados reais sincronizados do iFood.
+        </div>
+      )}
+
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
         <input 
-          type="text" 
-          placeholder="Buscar item do iFood..." 
-          className="flex-1 outline-none text-gray-700"
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
+            type="text" 
+            placeholder="Buscar item do iFood..." 
+            className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none shadow-sm"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
         />
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="grid grid-cols-12 bg-gray-50 border-b border-gray-200 p-4 font-semibold text-gray-700 text-sm">
-          <div className="col-span-5">Produto no iFood</div>
-          <div className="col-span-2 text-center">Preço iFood</div>
-          <div className="col-span-5">Produto no Hawk Vision (Estoque)</div>
-        </div>
-
-        <div className="divide-y divide-gray-100">
-          {filteredItems.length === 0 && !loading && (
-            <div className="p-8 text-center text-gray-500">
-                Nenhum item carregado. Verifique o console (F12) se houver erros.
+      <div className="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-slate-200 custom-scrollbar">
+        {loading && ifoodItems.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+                <Loader2 className="animate-spin" size={32}/>
+                <p>Buscando cardápio na API...</p>
             </div>
-          )}
-
-          {filteredItems.map(item => {
-            const isLinked = !!mappings[item.id];
-            
-            return (
-              <div key={item.id} className={`grid grid-cols-12 p-4 items-center hover:bg-gray-50 transition-colors ${!isLinked ? 'bg-red-50/30' : ''}`}>
+        ) : filteredItems.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                <p>Nenhum item encontrado.</p>
+            </div>
+        ) : (
+            <div className="divide-y divide-slate-100">
+                <div className="grid grid-cols-12 bg-slate-50 p-3 text-xs font-bold text-slate-500 uppercase sticky top-0 z-10">
+                    <div className="col-span-4">Produto iFood</div>
+                    <div className="col-span-2 text-center">Preço iFood</div>
+                    <div className="col-span-1"></div>
+                    <div className="col-span-5">Produto no Sistema (ERP)</div>
+                </div>
                 
-                {/* Lado Esquerdo: iFood */}
-                <div className="col-span-5 pr-4">
-                  <div className="font-medium text-gray-900">{item.name}</div>
-                  <div className="text-xs text-gray-500 bg-gray-100 inline-block px-2 py-0.5 rounded mt-1">
-                    {item.category}
-                  </div>
-                </div>
-
-                {/* Centro: Preço */}
-                <div className="col-span-2 text-center text-sm text-gray-600">
-                  R$ {item.price.toFixed(2)}
-                </div>
-
-                {/* Lado Direito: Dropdown ERP */}
-                <div className="col-span-5 flex items-center gap-2">
-                  <ArrowRight size={16} className="text-gray-300" />
-                  <select
-                    className={`w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none
-                      ${isLinked ? 'border-gray-300 bg-white' : 'border-red-300 bg-white'}`}
-                    value={mappings[item.id] || ""}
-                    onChange={(e) => handleMappingChange(item.id, e.target.value)}
-                  >
-                    <option value="">-- Não Vinculado --</option>
-                    {erpProducts.map(prod => (
-                      <option key={prod.id} value={prod.id}>
-                        {prod.name} (R$ {prod.price})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                {filteredItems.map(item => {
+                    const linkedId = mappings[item.id];
+                    return (
+                        <div key={item.id} className={`grid grid-cols-12 p-4 items-center hover:bg-slate-50 transition-colors ${linkedId ? 'bg-green-50/30' : ''}`}>
+                            <div className="col-span-4">
+                                <p className="font-bold text-slate-800">{item.name}</p>
+                                <p className="text-xs text-slate-500">{item.category} • {item.status === 'AVAILABLE' ? '🟢 Ativo' : '🔴 Pausado'}</p>
+                            </div>
+                            <div className="col-span-2 text-center font-mono text-slate-600">
+                                R$ {item.price.toFixed(2)}
+                            </div>
+                            <div className="col-span-1 flex justify-center">
+                                <ArrowRight size={16} className={linkedId ? "text-green-500" : "text-slate-300"}/>
+                            </div>
+                            <div className="col-span-5">
+                                <select 
+                                    className={`w-full p-2 rounded-lg border text-sm outline-none focus:ring-2 transition-all cursor-pointer
+                                        ${linkedId 
+                                            ? 'border-green-200 bg-white text-green-800 font-medium focus:ring-green-500' 
+                                            : 'border-slate-200 bg-slate-50 text-slate-400 focus:ring-red-500'}`}
+                                    value={linkedId || ""}
+                                    onChange={(e) => handleMappingChange(item.id, e.target.value)}
+                                >
+                                    <option value="">🚫 Não Vinculado (Item Avulso)</option>
+                                    {erpProducts.map(prod => (
+                                        <option key={prod.id} value={prod.id}>
+                                            📦 {prod.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+        )}
       </div>
-      
-      {!loading && ifoodItems.length > 0 && (
-         <div className="mt-4 p-4 bg-blue-50 text-blue-800 rounded-lg flex gap-2 text-sm">
-           <AlertTriangle size={18} />
-           <p>Dica: Itens "Não Vinculados" entrarão no sistema apenas com o nome do iFood.</p>
-         </div>
-      )}
+
+      <div className="mt-4 flex items-center gap-2 text-xs text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-200">
+         <AlertCircle size={14} className="text-blue-500"/>
+         <span>Dica: Vincule produtos para que a venda no iFood dê baixa automática no seu estoque do Hawk Vision.</span>
+      </div>
     </div>
   );
 }

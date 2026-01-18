@@ -23,6 +23,7 @@ import { Relatorios } from './pages/Relatorios'
 import { Notificacoes } from './pages/Notificacoes'
 import { Cozinha } from './pages/Cozinha'
 import { Bar } from './pages/Bar'
+import IfoodMenu from './pages/IfoodMenu';
 import IfoodConfig from './pages/IfoodConfig';
 
 export default function App() {
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="configuracoes" element={<Configuracoes />} />
               <Route path="/config/ifood" element={<IfoodConfig />} />
+              <Route path="/ifood-menu" element={<IfoodMenu />} />
               <Route path="/pedidos" element={<Pedidos />} />
               
               {/* KDS */}

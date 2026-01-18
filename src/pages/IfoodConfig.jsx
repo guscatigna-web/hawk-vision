@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom'; // Importação adicionada
-// IMPORTANTE: Se der erro nesta linha, mude para '../supabase' (sem /lib)
+import { useNavigate } from 'react-router-dom'; 
 import { supabase } from '../lib/supabase'; 
 
-// Renomeando Link para LinkIcon para evitar conflitos com React Router
 import { Store, Link as LinkIcon, Save, Loader2, CheckCircle, AlertCircle, RefreshCw, HelpCircle, ArrowRight } from 'lucide-react';
 
 export default function IfoodConfig() {
-  const navigate = useNavigate(); // Hook de navegação
+  const navigate = useNavigate(); 
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(true);
   const [userCode, setUserCode] = useState('');
@@ -172,8 +170,9 @@ export default function IfoodConfig() {
               <p><strong>Última Sincronização:</strong> {new Date(merchantDetails?.lastSync).toLocaleString()}</p>
               
               <div className="pt-4 mt-4 border-t border-green-200">
+                {/* --- CAMINHO CORRIGIDO AQUI --- */}
                 <button 
-                  onClick={() => navigate('/config/ifood/cardapio')}
+                  onClick={() => navigate('/ifood-menu')}
                   className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-indigo-700 flex justify-center items-center gap-2 transition-colors shadow-sm"
                 >
                   <span className="text-lg">🍔</span> 
