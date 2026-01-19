@@ -13,17 +13,15 @@ export default function Pedidos() {
   const [cashierStatus, setCashierStatus] = useState('checking')
   const [errorMsg, setErrorMsg] = useState(null)
   
-  // Controle do Aceite Automático
   const [autoAcceptInfo, setAutoAcceptInfo] = useState({ enabled: false, loading: true })
   
   const { user } = useAuth()
   const [processingId, setProcessingId] = useState(null)
-  const processingIdRef = useRef(null) // Ref para acesso imediato dentro do loop
+  const processingIdRef = useRef(null) 
   
   const [printData, setPrintData] = useState(null)
   const [printTrigger, setPrintTrigger] = useState(0)
 
-  // Refs para controle
   const processedOrderIds = useRef(new Set())
   const isFirstLoad = useRef(true)
   const settingsFetched = useRef(false) 
@@ -35,12 +33,9 @@ export default function Pedidos() {
     completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' }
   }
 
-  // Effect para disparar a impressão
   useEffect(() => {
     if (printData && printTrigger > 0) {
-        const timer = setTimeout(() => { 
-            window.print(); 
-        }, 500);
+        const timer = setTimeout(() => { window.print(); }, 500);
         return () => clearTimeout(timer);
     }
   }, [printTrigger, printData]);
@@ -52,39 +47,27 @@ export default function Pedidos() {
 
   const fetchIfoodSettings = useCallback(async (companyId) => {
       try {
-          const { data } = await supabase
-              .from('integrations_ifood')
-              .select('auto_accept')
-              .eq('company_id', companyId)
-              .maybeSingle();
-          
-          if (data) {
-              setAutoAcceptInfo({ enabled: data.auto_accept, loading: false });
-          } else {
-              setAutoAcceptInfo({ enabled: false, loading: false });
-          }
-      } catch (error) {
-          console.error("Erro ao buscar configs iFood:", error);
-      }
+          const { data } = await supabase.from('integrations_ifood').select('auto_accept').eq('company_id', companyId).maybeSingle();
+          if (data) setAutoAcceptInfo({ enabled: data.auto_accept, loading: false });
+          else setAutoAcceptInfo({ enabled: false, loading: false });
+      } catch (error) { console.error("Erro config iFood:", error); }
   }, []);
 
   const toggleAutoAccept = async () => {
       if (autoAcceptInfo.loading) return;
       const newState = !autoAcceptInfo.enabled;
       setAutoAcceptInfo(prev => ({ ...prev, enabled: newState }));
-      
       try {
           const searchCol = getSearchColumn(user.id);
           const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
           const companyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
-
           if (companyId) {
               await supabase.from('integrations_ifood').update({ auto_accept: newState }).eq('company_id', companyId);
               toast.success(`Aceite Automático ${newState ? 'ATIVADO' : 'DESATIVADO'}`);
           }
       } catch (e) {
           console.error(e);
-          toast.error("Erro ao salvar configuração");
+          toast.error("Erro ao salvar config");
           setAutoAcceptInfo(prev => ({ ...prev, enabled: !newState }));
       }
   };
@@ -98,34 +81,24 @@ export default function Pedidos() {
       
       const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
       if (emp) companyId = emp.company_id;
-      
       if (!companyId && user.user_metadata?.company_id) companyId = user.user_metadata.company_id;
       if (!companyId && String(user.id) === '10') companyId = 1;
 
-      if (!companyId) {
-          setLoading(false);
-          setErrorMsg("Empresa não vinculada.");
-          return;
-      }
+      if (!companyId) { setLoading(false); setErrorMsg("Empresa não vinculada."); return; }
 
-      if (!settingsFetched.current) {
-          fetchIfoodSettings(companyId);
-          settingsFetched.current = true;
-      }
+      if (!settingsFetched.current) { fetchIfoodSettings(companyId); settingsFetched.current = true; }
 
       const { data: session } = await supabase.from('cashier_sessions').select('id').eq('company_id', companyId).eq('status', 'open').maybeSingle();
-      if (!session) { setCashierStatus('closed'); } 
-      else { setCashierStatus('open'); }
+      if (!session) setCashierStatus('closed'); else setCashierStatus('open');
 
       const windowDate = new Date();
       windowDate.setDate(windowDate.getDate() - 2);
-      const windowISO = windowDate.toISOString();
-
+      
       const { data, error } = await supabase
         .from('sales')
         .select(`*, sale_items (quantity, unit_price, product:products(name, category_id))`)
         .eq('company_id', companyId)
-        .gte('created_at', windowISO)
+        .gte('created_at', windowDate.toISOString())
         .neq('status', 'cancelado')
         .order('created_at', { ascending: false })
         .limit(100);
@@ -139,15 +112,9 @@ export default function Pedidos() {
       });
 
       setOrders(cleanOrders);
-
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { console.error(error); } finally { setLoading(false); }
   }, [user, fetchIfoodSettings, getSearchColumn]); 
 
-  // Memoized: Garante que a função não seja recriada, satisfazendo o useEffect
   const handlePrint = useCallback((order) => {
     const kitchenItems = [];
     const barItems = [];
@@ -164,9 +131,11 @@ export default function Pedidos() {
     if (kitchenItems.length > 0) tickets.push({ sector: 'COZINHA', items: kitchenItems });
     if (barItems.length > 0) tickets.push({ sector: 'BAR', items: barItems });
 
+    const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
+
     const orderInfo = {
         type: order.channel === 'IFOOD' ? 'IFOOD' : 'MESA',
-        identifier: order.channel === 'IFOOD' ? (order.display_id || String(order.ifood_order_id).slice(-4)) : 'BALCÃO',
+        identifier: order.channel === 'IFOOD' ? displayId : 'BALCÃO',
         customer: order.customer_name,
         waiter: 'Sistema'
     };
@@ -175,14 +144,10 @@ export default function Pedidos() {
     setPrintTrigger(prev => prev + 1);
   }, []);
 
-  // Memoized: Função Coração (Manual e Automático)
   const handleStatusChange = useCallback(async (order, newStatus) => {
-    // Bloqueio de duplicidade via Ref e State
     if (processingIdRef.current === order.id) return;
-    
     setProcessingId(order.id);
     processingIdRef.current = order.id;
-
     const toastId = toast.loading(`Processando: ${newStatus}...`);
 
     try {
@@ -209,7 +174,6 @@ export default function Pedidos() {
         
         if (newStatus === 'Em Preparo') {
             handlePrint(order);
-            // Toca som no sucesso
             const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
             audio.play().catch(e => console.error(e));
         }
@@ -222,7 +186,7 @@ export default function Pedidos() {
         setProcessingId(null);
         processingIdRef.current = null;
     }
-  }, [user, getSearchColumn, handlePrint, fetchOrders]); // Dependências explícitas
+  }, [user, getSearchColumn, handlePrint, fetchOrders]); 
 
   // --- O CÉREBRO DO AUTO-ACEITE (ROBOT OPERATOR) ---
   useEffect(() => {
@@ -235,20 +199,16 @@ export default function Pedidos() {
     }
 
     orders.forEach(order => {
-        // Se o pedido é NOVO
         if (!processedOrderIds.current.has(order.id)) {
             processedOrderIds.current.add(order.id);
             
             const isIfood = order.channel === 'IFOOD';
             const status = (order.status || '').toUpperCase();
 
-            // Lógica 1: Auto-Aceite (Frontend Trigger)
             if (isIfood && (status === 'PENDING' || status === 'PLACED') && autoAcceptInfo.enabled) {
                 console.log(`🤖 AUTO-ACEITE: Detectado pedido #${order.id}. Confirmando...`);
-                // Agora seguro para chamar pois está no useCallback
                 handleStatusChange(order, 'Em Preparo');
             }
-            // Lógica 2: Notificação se já chegou pronto
             else if (status === 'EM PREPARO' || status === 'CONFIRMED') {
                  handlePrint(order);
                  if (audioEnabled) {
@@ -258,7 +218,7 @@ export default function Pedidos() {
             }
         }
     });
-  }, [orders, loading, audioEnabled, autoAcceptInfo.enabled, handleStatusChange, handlePrint]); // Dependências completas e seguras
+  }, [orders, loading, audioEnabled, autoAcceptInfo.enabled, handleStatusChange, handlePrint]);
 
   useEffect(() => {
     fetchOrders();
@@ -356,14 +316,15 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
     
-    const displayId = order.display_id || String(order.id).slice(0,4);
+    // DisplayID extraído corretamente
+    const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
 
     return (
         <div className={`bg-white p-3 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow cursor-pointer relative group ${isProcessing ? 'opacity-70' : ''}`}>
             <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-1">
                     <span className="font-bold text-slate-800">#{displayId}</span>
-                    {isIfood && <img src="https://cdn.icon-icons.com/icons2/2699/PNG/512/ifood_logo_icon_170304.png" className="w-4 h-4" alt="iFood"/>}
+                    {isIfood && <Bike size={16} className="text-red-600 fill-current" />}
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={(e) => { e.stopPropagation(); onPrint(); }} className="text-slate-400 hover:text-slate-700" title="Imprimir Produção"><Printer size={14}/></button>
@@ -387,11 +348,12 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
 }
 
 function OrderModal({ order, onClose }) {
+    const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
-                    <h2 className="font-bold text-lg">Pedido #{order.display_id || order.id}</h2>
+                    <h2 className="font-bold text-lg">Pedido #{displayId}</h2>
                     <button onClick={onClose}><Ban size={20}/></button>
                 </div>
                 <div className="p-6 max-h-[80vh] overflow-y-auto">

@@ -102,7 +102,7 @@ serve(async (req) => {
     }
 
     // ==================================================================
-    // ROTA 4: POLLING - LIMPO E RÁPIDO (SEM CONFIRMAÇÃO AUTOMÁTICA)
+    // ROTA 4: POLLING - AGORA COM EXTRAÇÃO CORRETA DE ID
     // ==================================================================
     if (req.method === "POST" && pathname.endsWith("/polling")) {
       const { companyId } = await req.json();
@@ -178,6 +178,10 @@ serve(async (req) => {
               const orderData = await orderRes.json();
               const serverTime = new Date().toISOString();
 
+              // --- CORREÇÃO: Extração do Display ID ---
+              // Confirmado pelo seu JSON: orderData.displayId está na raiz
+              const displayId = orderData.displayId || orderData.orderIdentification?.displayId || null;
+
               // Sempre insere como PENDING/Aberto. O Frontend decide se aceita.
               try {
                 const { data: insertedSale, error: saleError } = await supabaseAdmin
@@ -185,10 +189,11 @@ serve(async (req) => {
                   .insert({
                     company_id: numericCompanyId,
                     customer_name: orderData.customer.name,
-                    status: 'PENDING', // Sempre entra como pendente
+                    status: 'PENDING',
                     total: orderData.total.value,
                     channel: 'IFOOD',
                     ifood_order_id: orderId,
+                    display_id: displayId, // <--- CAMPO SALVO CORRETAMENTE
                     created_at: serverTime,
                     payment_method: 'ifood',
                     cashier_session_id: sessionId
@@ -260,7 +265,7 @@ serve(async (req) => {
     }
 
     // ==================================================================
-    // ROTA 5: UPDATE STATUS - FRONTEND VAI CHAMAR ISSO AUTOMATICAMENTE
+    // ROTA 5: UPDATE STATUS - COM AUTO-CICATRIZAÇÃO
     // ==================================================================
     if (req.method === "POST" && pathname.endsWith("/update-status")) {
         const { companyId, ifoodOrderId, status } = await req.json();
@@ -269,6 +274,26 @@ serve(async (req) => {
         if (!integration) throw new Error("Integração não encontrada.");
         
         let token = integration.access_token;
+
+        // --- AUTO-CICATRIZAÇÃO: Verifica se falta o display_id ---
+        const { data: sale } = await supabaseAdmin.from('sales').select('display_id').eq('ifood_order_id', ifoodOrderId).single();
+        
+        if (sale && !sale.display_id) {
+            console.log("🚑 Resgatando Display ID perdido...");
+            try {
+                const resOrder = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (resOrder.ok) {
+                    const d = await resOrder.json();
+                    const did = d.displayId || d.orderIdentification?.displayId || null;
+                    if (did) {
+                        await supabaseAdmin.from('sales').update({ display_id: did }).eq('ifood_order_id', ifoodOrderId);
+                    }
+                }
+            } catch(e) { console.error("Erro resgate ID", e); }
+        }
+        // ---------------------------------------------------------
         
         let endpoint = "";
         if (status === "Em Preparo") endpoint = "confirm";       
