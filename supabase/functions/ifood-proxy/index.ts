@@ -54,6 +54,28 @@ serve(async (req) => {
       return data.accessToken;
     }
 
+    // --- HELPER: Busca e Salva ID (Auto-Cicatrizante) ---
+    async function fetchAndSaveDisplayId(orderId: string, token: string, companyId: number) {
+        try {
+            console.log(`🕵️ Buscando DisplayID faltante: ${orderId}`);
+            const res = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${orderId}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const displayId = data.displayId || data.orderIdentification?.displayId || null;
+                
+                if (displayId) {
+                    await supabaseAdmin.from('sales').update({ display_id: displayId }).eq('ifood_order_id', orderId);
+                    return displayId;
+                }
+            }
+        } catch (e) {
+            console.error("Erro helper ID:", e);
+        }
+        return null;
+    }
+
     // --- ROTA 1: INIT AUTH ---
     if (req.method === "POST" && pathname.endsWith("/init-auth")) {
         const form = new URLSearchParams(); form.append("clientId", clientId);
@@ -102,7 +124,7 @@ serve(async (req) => {
     }
 
     // ==================================================================
-    // ROTA 4: POLLING - AGORA COM EXTRAÇÃO CORRETA DE ID
+    // ROTA 4: POLLING
     // ==================================================================
     if (req.method === "POST" && pathname.endsWith("/polling")) {
       const { companyId } = await req.json();
@@ -112,7 +134,6 @@ serve(async (req) => {
       
       let token = integration.access_token;
       
-      // 1. Busca Eventos
       let eventsRes = await fetch(`${IFOOD_API_URL}/order/v1.0/events:polling`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -178,11 +199,8 @@ serve(async (req) => {
               const orderData = await orderRes.json();
               const serverTime = new Date().toISOString();
 
-              // --- CORREÇÃO: Extração do Display ID ---
-              // Confirmado pelo seu JSON: orderData.displayId está na raiz
               const displayId = orderData.displayId || orderData.orderIdentification?.displayId || null;
 
-              // Sempre insere como PENDING/Aberto. O Frontend decide se aceita.
               try {
                 const { data: insertedSale, error: saleError } = await supabaseAdmin
                   .from('sales')
@@ -193,7 +211,7 @@ serve(async (req) => {
                     total: orderData.total.value,
                     channel: 'IFOOD',
                     ifood_order_id: orderId,
-                    display_id: displayId, // <--- CAMPO SALVO CORRETAMENTE
+                    display_id: displayId,
                     created_at: serverTime,
                     payment_method: 'ifood',
                     cashier_session_id: sessionId
@@ -237,7 +255,7 @@ serve(async (req) => {
             if (event.code === 'CFM') newStatus = 'Em Preparo';
             else if (event.code === 'DSP') newStatus = 'Saiu para entrega';
             else if (event.code === 'CON') newStatus = 'Concluido';
-            else if (event.code === 'CAN') newStatus = 'Cancelado';
+            else if (event.code === 'CAN') newStatus = 'Cancelado'; // Só atualiza o banco local se vier do iFood
 
             if (newStatus) {
                 await supabaseAdmin
@@ -265,21 +283,20 @@ serve(async (req) => {
     }
 
     // ==================================================================
-    // ROTA 5: UPDATE STATUS - COM AUTO-CICATRIZAÇÃO
+    // ROTA 5: UPDATE STATUS (COM SUPORTE A CANCELAMENTO)
     // ==================================================================
     if (req.method === "POST" && pathname.endsWith("/update-status")) {
-        const { companyId, ifoodOrderId, status } = await req.json();
+        // Agora recebemos 'reason' opcional no body
+        const { companyId, ifoodOrderId, status, reason } = await req.json();
         
         const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
         if (!integration) throw new Error("Integração não encontrada.");
         
         let token = integration.access_token;
 
-        // --- AUTO-CICATRIZAÇÃO: Verifica se falta o display_id ---
+        // Auto-Cicatrizante
         const { data: sale } = await supabaseAdmin.from('sales').select('display_id').eq('ifood_order_id', ifoodOrderId).single();
-        
         if (sale && !sale.display_id) {
-            console.log("🚑 Resgatando Display ID perdido...");
             try {
                 const resOrder = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}`, {
                     headers: { "Authorization": `Bearer ${token}` }
@@ -293,17 +310,33 @@ serve(async (req) => {
                 }
             } catch(e) { console.error("Erro resgate ID", e); }
         }
-        // ---------------------------------------------------------
         
         let endpoint = "";
-        if (status === "Em Preparo") endpoint = "confirm";       
-        else if (status === "Saiu para entrega") endpoint = "dispatch"; 
+        let requestBody = {}; // Corpo da requisição para o iFood
+
+        if (status === "Em Preparo") {
+            endpoint = "confirm";       
+        } else if (status === "Saiu para entrega") {
+            endpoint = "dispatch"; 
+        } else if (status === "Cancelado") {
+            // Lógica específica de cancelamento
+            endpoint = "requestCancellation";
+            if (reason) {
+                requestBody = {
+                    reason: reason.description,
+                    cancellationCode: reason.code
+                };
+            } else {
+                // Fallback de segurança
+                requestBody = { reason: "Problemas operacionais", cancellationCode: "501" };
+            }
+        }
         
         if (endpoint) {
              let ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-                body: JSON.stringify({}) // Body vazio essencial
+                body: JSON.stringify(requestBody)
             });
 
             if (ifoodRes.status === 401) {
@@ -311,16 +344,21 @@ serve(async (req) => {
                 ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, {
                     method: "POST",
                     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({})
+                    body: JSON.stringify(requestBody)
                 });
             }
             
             if (!ifoodRes.ok) {
                  const txt = await ifoodRes.text();
                  console.error(`Erro iFood (${endpoint}):`, txt);
+                 // Se o iFood rejeitar o cancelamento (ex: pedido já despachado), não atualizamos o banco local
+                 if (status === 'Cancelado') {
+                     return new Response(JSON.stringify({ error: `iFood rejeitou: ${txt}` }), { status: 400, headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
+                 }
             }
         }
         
+        // Se deu tudo certo no iFood (ou se não exigia iFood), atualiza o banco local
         await supabaseAdmin.from('sales').update({ status: status }).eq('ifood_order_id', ifoodOrderId);
 
         return new Response(JSON.stringify({ success: true }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });

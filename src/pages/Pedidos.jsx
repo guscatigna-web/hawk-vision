@@ -1,14 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings } from 'lucide-react'
+import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings, XCircle, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { KitchenTicket } from '../components/KitchenTicket'
 
+// Motivos padrão exigidos pela API do iFood
+const CANCELLATION_REASONS = [
+    { code: '501', label: 'Problemas de sistema/equipamento' },
+    { code: '502', label: 'Produto indisponível' },
+    { code: '503', label: 'Restaurante sem entregador' },
+    { code: '506', label: 'Pedido fora da área de entrega' },
+    { code: '509', label: 'Restaurante fechado' },
+    { code: '511', label: 'Área de risco' },
+    { code: '512', label: 'Dados do cliente incompletos' },
+    { code: '513', label: 'Cliente não localizado' }
+]
+
 export default function Pedidos() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selectedOrder, setSelectedOrder] = useState(null)
+  const [selectedOrder, setSelectedOrder] = useState(null) // Para Modal de Detalhes
+  const [orderToCancel, setOrderToCancel] = useState(null) // Para Modal de Cancelamento
+  
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [cashierStatus, setCashierStatus] = useState('checking')
   const [errorMsg, setErrorMsg] = useState(null)
@@ -99,7 +113,7 @@ export default function Pedidos() {
         .select(`*, sale_items (quantity, unit_price, product:products(name, category_id))`)
         .eq('company_id', companyId)
         .gte('created_at', windowDate.toISOString())
-        .neq('status', 'cancelado')
+        .neq('status', 'cancelado') // Oculta cancelados do board principal
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -144,7 +158,7 @@ export default function Pedidos() {
     setPrintTrigger(prev => prev + 1);
   }, []);
 
-  const handleStatusChange = useCallback(async (order, newStatus) => {
+  const handleStatusChange = useCallback(async (order, newStatus, cancelDetails = null) => {
     if (processingIdRef.current === order.id) return;
     setProcessingId(order.id);
     processingIdRef.current = order.id;
@@ -160,7 +174,9 @@ export default function Pedidos() {
                 body: { 
                     companyId: currentCompanyId, 
                     ifoodOrderId: order.ifood_order_id, 
-                    status: newStatus 
+                    status: newStatus,
+                    // Se for cancelamento, envia o objeto 'reason' necessário para o iFood
+                    reason: cancelDetails 
                 }
             });
             if (error) throw error;
@@ -185,6 +201,7 @@ export default function Pedidos() {
     } finally {
         setProcessingId(null);
         processingIdRef.current = null;
+        setOrderToCancel(null); // Fecha modal de cancelamento se estiver aberto
     }
   }, [user, getSearchColumn, handlePrint, fetchOrders]); 
 
@@ -307,7 +324,27 @@ export default function Pedidos() {
           })}
         </div>
       </div>
-      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />}
+      
+      {/* Modal de Detalhes */}
+      {selectedOrder && (
+        <OrderModal 
+            order={selectedOrder} 
+            onClose={() => setSelectedOrder(null)} 
+            onInitCancellation={() => {
+                setOrderToCancel(selectedOrder);
+                setSelectedOrder(null);
+            }}
+        />
+      )}
+
+      {/* Modal de Cancelamento (Com Motivos) */}
+      {orderToCancel && (
+        <CancellationModal 
+            order={orderToCancel}
+            onClose={() => setOrderToCancel(null)}
+            onConfirm={(reason) => handleStatusChange(orderToCancel, 'Cancelado', reason)}
+        />
+      )}
     </div>
   )
 }
@@ -315,8 +352,6 @@ export default function Pedidos() {
 function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing }) {
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-    
-    // DisplayID extraído corretamente
     const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
 
     return (
@@ -347,14 +382,14 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
     )
 }
 
-function OrderModal({ order, onClose }) {
+function OrderModal({ order, onClose, onInitCancellation }) {
     const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
                     <h2 className="font-bold text-lg">Pedido #{displayId}</h2>
-                    <button onClick={onClose}><Ban size={20}/></button>
+                    <button onClick={onClose}><XCircle size={20}/></button>
                 </div>
                 <div className="p-6 max-h-[80vh] overflow-y-auto">
                     <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100"><h3 className="text-sm font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><MapPin size={16}/> Cliente</h3><p className="font-bold text-slate-800 text-lg">{order.customer_name}</p></div>
@@ -369,7 +404,58 @@ function OrderModal({ order, onClose }) {
                     </div>
                     <div className="flex justify-between items-center pt-4 border-t-2 border-slate-100"><span className="text-lg font-bold text-slate-600">Total</span><span className="text-2xl font-bold text-green-600">R$ {Number(order.total).toFixed(2)}</span></div>
                 </div>
-                <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end"><button onClick={onClose} className="px-6 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800">Fechar</button></div>
+                <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+                    {/* Botão de Cancelamento para Pedidos iFood */}
+                    {order.channel === 'IFOOD' ? (
+                        <button onClick={onInitCancellation} className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg font-bold text-sm hover:bg-red-100 flex items-center gap-2">
+                            <Ban size={16}/> Cancelar Pedido
+                        </button>
+                    ) : <div></div>}
+                    
+                    <button onClick={onClose} className="px-6 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800">Fechar</button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function CancellationModal({ onClose, onConfirm }) {
+    const [reason, setReason] = useState(CANCELLATION_REASONS[0].code)
+    
+    return (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden border border-red-200">
+                <div className="bg-red-50 p-4 border-b border-red-100">
+                    <h3 className="font-bold text-red-700 flex items-center gap-2"><AlertCircle size={20}/> Cancelar Pedido iFood</h3>
+                    <p className="text-red-600 text-xs mt-1">Essa ação é irreversível e será enviada ao iFood.</p>
+                </div>
+                <div className="p-6">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Selecione o motivo:</label>
+                    <select 
+                        value={reason} 
+                        onChange={(e) => setReason(e.target.value)}
+                        className="w-full p-2 border border-slate-300 rounded-lg bg-white mb-4 text-sm"
+                    >
+                        {CANCELLATION_REASONS.map(r => (
+                            <option key={r.code} value={r.code}>{r.code} - {r.label}</option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-slate-500 italic bg-slate-50 p-2 rounded">
+                        Ao confirmar, o cliente será notificado e o reembolso processado conforme as regras do iFood.
+                    </p>
+                </div>
+                <div className="p-4 bg-slate-50 flex justify-end gap-3">
+                    <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg">Voltar</button>
+                    <button 
+                        onClick={() => {
+                            const selected = CANCELLATION_REASONS.find(r => r.code === reason);
+                            onConfirm({ code: reason, description: selected.label });
+                        }} 
+                        className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700"
+                    >
+                        Confirmar Cancelamento
+                    </button>
+                </div>
             </div>
         </div>
     )
