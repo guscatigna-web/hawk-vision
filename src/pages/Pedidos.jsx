@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, AlertCircle } from 'lucide-react'
+import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { KitchenTicket } from '../components/KitchenTicket'
@@ -13,13 +13,21 @@ export default function Pedidos() {
   const [cashierStatus, setCashierStatus] = useState('checking')
   const [errorMsg, setErrorMsg] = useState(null)
   
+  // Controle do Aceite Automático
+  const [autoAcceptInfo, setAutoAcceptInfo] = useState({ enabled: false, loading: true })
+  
   const { user } = useAuth()
   const [processingId, setProcessingId] = useState(null)
+  const processingIdRef = useRef(null) // Ref para acesso imediato dentro do loop
   
   const [printData, setPrintData] = useState(null)
   const [printTrigger, setPrintTrigger] = useState(0)
 
-  // 1. ALTERAÇÃO UX: Removida a coluna 'debug' (Status Desconhecido)
+  // Refs para controle
+  const processedOrderIds = useRef(new Set())
+  const isFirstLoad = useRef(true)
+  const settingsFetched = useRef(false) 
+
   const columns = {
     pending: { label: '🔔 Pendentes', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
     preparing: { label: '👨‍🍳 Em Preparo', color: 'bg-blue-100 border-blue-300 text-blue-800' },
@@ -37,12 +45,50 @@ export default function Pedidos() {
     }
   }, [printTrigger, printData]);
 
-  const getSearchColumn = (userId) => {
+  const getSearchColumn = useCallback((userId) => {
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
     return isUUID ? 'auth_user_id' : 'id';
-  }
+  }, []);
 
-  // --- LÓGICA ORIGINAL PRESERVADA ---
+  const fetchIfoodSettings = useCallback(async (companyId) => {
+      try {
+          const { data } = await supabase
+              .from('integrations_ifood')
+              .select('auto_accept')
+              .eq('company_id', companyId)
+              .maybeSingle();
+          
+          if (data) {
+              setAutoAcceptInfo({ enabled: data.auto_accept, loading: false });
+          } else {
+              setAutoAcceptInfo({ enabled: false, loading: false });
+          }
+      } catch (error) {
+          console.error("Erro ao buscar configs iFood:", error);
+      }
+  }, []);
+
+  const toggleAutoAccept = async () => {
+      if (autoAcceptInfo.loading) return;
+      const newState = !autoAcceptInfo.enabled;
+      setAutoAcceptInfo(prev => ({ ...prev, enabled: newState }));
+      
+      try {
+          const searchCol = getSearchColumn(user.id);
+          const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
+          const companyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
+
+          if (companyId) {
+              await supabase.from('integrations_ifood').update({ auto_accept: newState }).eq('company_id', companyId);
+              toast.success(`Aceite Automático ${newState ? 'ATIVADO' : 'DESATIVADO'}`);
+          }
+      } catch (e) {
+          console.error(e);
+          toast.error("Erro ao salvar configuração");
+          setAutoAcceptInfo(prev => ({ ...prev, enabled: !newState }));
+      }
+  };
+
   const fetchOrders = useCallback(async () => {
     try {
       if (!user) return;
@@ -62,11 +108,15 @@ export default function Pedidos() {
           return;
       }
 
+      if (!settingsFetched.current) {
+          fetchIfoodSettings(companyId);
+          settingsFetched.current = true;
+      }
+
       const { data: session } = await supabase.from('cashier_sessions').select('id').eq('company_id', companyId).eq('status', 'open').maybeSingle();
       if (!session) { setCashierStatus('closed'); } 
       else { setCashierStatus('open'); }
 
-      // Janela de 48h
       const windowDate = new Date();
       windowDate.setDate(windowDate.getDate() - 2);
       const windowISO = windowDate.toISOString();
@@ -82,7 +132,6 @@ export default function Pedidos() {
 
       if (error) throw error;
 
-      // Filtro Bala de Prata
       const cleanOrders = (data || []).filter(order => {
           const channel = (order.channel || '').toUpperCase();
           const ifoodId = order.ifood_order_id || '';
@@ -96,20 +145,10 @@ export default function Pedidos() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, fetchIfoodSettings, getSearchColumn]); 
 
-  useEffect(() => {
-    fetchOrders();
-    const channel = supabase.channel('sales-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => fetchOrders()).subscribe();
-    return () => { supabase.removeChannel(channel) };
-  }, [fetchOrders]);
-
-  const enableAudio = () => {
-    const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-    audio.play().then(() => { toast.success("Som Ativado!"); setAudioEnabled(true); }).catch(e => console.error(e));
-  }
-
-  const handlePrint = (order) => {
+  // Memoized: Garante que a função não seja recriada, satisfazendo o useEffect
+  const handlePrint = useCallback((order) => {
     const kitchenItems = [];
     const barItems = [];
     order.sale_items.forEach(item => {
@@ -134,19 +173,23 @@ export default function Pedidos() {
 
     setPrintData({ tickets, orderInfo, date: new Date().toLocaleString() });
     setPrintTrigger(prev => prev + 1);
-  };
+  }, []);
 
-  async function handleStatusChange(order, newStatus) {
-    if (processingId) return; 
+  // Memoized: Função Coração (Manual e Automático)
+  const handleStatusChange = useCallback(async (order, newStatus) => {
+    // Bloqueio de duplicidade via Ref e State
+    if (processingIdRef.current === order.id) return;
+    
     setProcessingId(order.id);
-    const toastId = toast.loading("Processando...");
+    processingIdRef.current = order.id;
+
+    const toastId = toast.loading(`Processando: ${newStatus}...`);
 
     try {
         const searchCol = getSearchColumn(user.id);
         const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).single();
         const currentCompanyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
 
-        // Atualiza status no iFood via Edge Function (Código Original Preservado)
         if (order.channel === 'IFOOD' && order.ifood_order_id) {
             const { error } = await supabase.functions.invoke('ifood-proxy/update-status', {
                 body: { 
@@ -159,20 +202,73 @@ export default function Pedidos() {
             toast.success(`iFood: ${newStatus}`, { id: toastId });
         } 
         
-        // Atualiza banco local
         const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', order.id);
         if (error) throw error;
         
         if (order.channel !== 'IFOOD') toast.success(`Movido para: ${newStatus}`, { id: toastId });
         
-        if (newStatus === 'Em Preparo') handlePrint(order);
+        if (newStatus === 'Em Preparo') {
+            handlePrint(order);
+            // Toca som no sucesso
+            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+            audio.play().catch(e => console.error(e));
+        }
+        
         fetchOrders(); 
     } catch (error) {
         console.error(error);
         toast.error('Erro ao atualizar', { id: toastId });
     } finally {
         setProcessingId(null);
+        processingIdRef.current = null;
     }
+  }, [user, getSearchColumn, handlePrint, fetchOrders]); // Dependências explícitas
+
+  // --- O CÉREBRO DO AUTO-ACEITE (ROBOT OPERATOR) ---
+  useEffect(() => {
+    if (loading || orders.length === 0) return;
+
+    if (isFirstLoad.current) {
+        orders.forEach(o => processedOrderIds.current.add(o.id));
+        isFirstLoad.current = false;
+        return;
+    }
+
+    orders.forEach(order => {
+        // Se o pedido é NOVO
+        if (!processedOrderIds.current.has(order.id)) {
+            processedOrderIds.current.add(order.id);
+            
+            const isIfood = order.channel === 'IFOOD';
+            const status = (order.status || '').toUpperCase();
+
+            // Lógica 1: Auto-Aceite (Frontend Trigger)
+            if (isIfood && (status === 'PENDING' || status === 'PLACED') && autoAcceptInfo.enabled) {
+                console.log(`🤖 AUTO-ACEITE: Detectado pedido #${order.id}. Confirmando...`);
+                // Agora seguro para chamar pois está no useCallback
+                handleStatusChange(order, 'Em Preparo');
+            }
+            // Lógica 2: Notificação se já chegou pronto
+            else if (status === 'EM PREPARO' || status === 'CONFIRMED') {
+                 handlePrint(order);
+                 if (audioEnabled) {
+                    const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+                    audio.play().catch(e => console.error(e));
+                }
+            }
+        }
+    });
+  }, [orders, loading, audioEnabled, autoAcceptInfo.enabled, handleStatusChange, handlePrint]); // Dependências completas e seguras
+
+  useEffect(() => {
+    fetchOrders();
+    const channel = supabase.channel('sales-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => fetchOrders()).subscribe();
+    return () => { supabase.removeChannel(channel) };
+  }, [fetchOrders]);
+
+  const enableAudio = () => {
+    const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+    audio.play().then(() => { toast.success("Som Ativado!"); setAudioEnabled(true); }).catch(e => console.error(e));
   }
 
   const getColumnOrders = (key) => orders.filter(o => {
@@ -181,7 +277,6 @@ export default function Pedidos() {
       if (key === 'preparing') return ['em preparo', 'confirmed', 'cfm', 'preparando', 'preparing'].includes(s);
       if (key === 'delivery') return ['saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup'].includes(s);
       if (key === 'completed') return ['concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s);
-      // Debug removido do filtro também
       return false;
   });
 
@@ -197,18 +292,30 @@ export default function Pedidos() {
             <h1 className="text-2xl font-bold text-slate-800">Gerenciador de Pedidos</h1>
             <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full border border-green-200 flex items-center gap-1"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div> Caixa Aberto</span>
         </div>
-        <div className="flex gap-2">
-            {!audioEnabled && <button onClick={enableAudio} className="bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Volume2 size={16}/> Ativar Som</button>}
-            <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Bike size={16}/> iFood Online</span>
+        
+        <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-600 flex items-center gap-1"><Settings size={14}/> Auto-Aceite:</span>
+                <button 
+                    onClick={toggleAutoAccept} 
+                    className={`transition-colors ${autoAcceptInfo.enabled ? 'text-green-600' : 'text-slate-300'}`}
+                    disabled={autoAcceptInfo.loading}
+                >
+                    {autoAcceptInfo.enabled ? <ToggleRight size={32} className="fill-current"/> : <ToggleLeft size={32} className="fill-current"/>}
+                </button>
+            </div>
+
+            <div className="flex gap-2">
+                {!audioEnabled && <button onClick={enableAudio} className="bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Volume2 size={16}/> Ativar Som</button>}
+                <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Bike size={16}/> iFood Online</span>
+            </div>
         </div>
       </div>
       <div className="flex-1 overflow-x-auto overflow-y-hidden">
         <div className="flex gap-4 h-full min-w-[1200px]">
           {Object.entries(columns).map(([key, col]) => {
-            // Calculamos os pedidos desta coluna antes de renderizar
             const ordersInColumn = getColumnOrders(key);
 
-            // 2. ALTERAÇÃO UX: Se for 'pending' e estiver vazia, não renderiza nada (retorna null)
             if (key === 'pending' && ordersInColumn.length === 0) return null;
 
             return (
@@ -249,7 +356,6 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
     
-    // 4. ALTERAÇÃO UX: Mostra display_id (numero curto ifood) ou o ID se não tiver
     const displayId = order.display_id || String(order.id).slice(0,4);
 
     return (
@@ -266,8 +372,6 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
             </div>
             <div className="text-sm font-medium text-slate-700 truncate mb-2">{order.customer_name || 'Cliente Balcão'}</div>
             
-            {/* 3. ALTERAÇÃO UX: Lista de itens removida do card para limpeza */}
-
             {order.sale_items?.some(i => !i.product) && <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1 rounded mb-2 w-fit"><AlertTriangle size={10} /> Item s/ vínculo</div>}
             <div className="flex justify-between items-center border-t border-slate-100 pt-2">
                 <span className="font-bold text-green-700">R$ {Number(order.total).toFixed(2)}</span>
