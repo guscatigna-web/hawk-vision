@@ -19,12 +19,12 @@ export default function Pedidos() {
   const [printData, setPrintData] = useState(null)
   const [printTrigger, setPrintTrigger] = useState(0)
 
+  // 1. ALTERAÇÃO UX: Removida a coluna 'debug' (Status Desconhecido)
   const columns = {
     pending: { label: '🔔 Pendentes', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
     preparing: { label: '👨‍🍳 Em Preparo', color: 'bg-blue-100 border-blue-300 text-blue-800' },
     delivery: { label: '🛵 Em Entrega', color: 'bg-indigo-100 border-indigo-300 text-indigo-800' },
-    completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' },
-    debug: { label: '❓ Status Desconhecido', color: 'bg-gray-100 border-gray-300 text-gray-800' }
+    completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' }
   }
 
   // Effect para disparar a impressão
@@ -42,7 +42,7 @@ export default function Pedidos() {
     return isUUID ? 'auth_user_id' : 'id';
   }
 
-  // --- ALTERAÇÃO SOLICITADA: FILTRO BALA DE PRATA ---
+  // --- LÓGICA ORIGINAL PRESERVADA ---
   const fetchOrders = useCallback(async () => {
     try {
       if (!user) return;
@@ -66,10 +66,9 @@ export default function Pedidos() {
       if (!session) { setCashierStatus('closed'); } 
       else { setCashierStatus('open'); }
 
-      // 1. Busca Ampla (Sem filtros restritivos de SQL para evitar conflitos)
-      // Pega as últimas 48h para garantir segurança
+      // Janela de 48h
       const windowDate = new Date();
-      windowDate.setDate(windowDate.getDate() - 2); 
+      windowDate.setDate(windowDate.getDate() - 2);
       const windowISO = windowDate.toISOString();
 
       const { data, error } = await supabase
@@ -83,12 +82,10 @@ export default function Pedidos() {
 
       if (error) throw error;
 
-      // 2. Filtro Bala de Prata (JavaScript)
-      // Mantém apenas o que tem canal IFOOD ou ID de iFood preenchido
+      // Filtro Bala de Prata
       const cleanOrders = (data || []).filter(order => {
           const channel = (order.channel || '').toUpperCase();
           const ifoodId = order.ifood_order_id || '';
-          
           return channel.includes('IFOOD') || (ifoodId.length > 5);
       });
 
@@ -178,14 +175,13 @@ export default function Pedidos() {
     }
   }
 
-  // Agrupamento de colunas original
   const getColumnOrders = (key) => orders.filter(o => {
       const s = (o.status || '').toLowerCase().trim();
       if (key === 'pending') return ['pendente', 'placed', 'plc', 'pending', 'new', 'aberto'].includes(s);
       if (key === 'preparing') return ['em preparo', 'confirmed', 'cfm', 'preparando', 'preparing'].includes(s);
       if (key === 'delivery') return ['saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup'].includes(s);
       if (key === 'completed') return ['concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s);
-      if (key === 'debug') return !['pendente', 'placed', 'plc', 'pending', 'new', 'aberto', 'em preparo', 'confirmed', 'cfm', 'preparando', 'preparing', 'saiu para entrega', 'dispatched', 'dsp', 'entrega', 'delivery', 'ready_to_pickup', 'concluido', 'concluded', 'con', 'entregue', 'completed'].includes(s);
+      // Debug removido do filtro também
       return false;
   });
 
@@ -208,32 +204,40 @@ export default function Pedidos() {
       </div>
       <div className="flex-1 overflow-x-auto overflow-y-hidden">
         <div className="flex gap-4 h-full min-w-[1200px]">
-          {Object.entries(columns).map(([key, col]) => (
-            <div key={key} className={`flex-1 flex flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
-              <div className="p-3 border-b border-black/5 font-bold flex justify-between items-center">
-                <span className={col.color.split(' ')[2]}>{col.label}</span>
-                <span className="bg-white/50 px-2 py-0.5 rounded text-xs text-black/60 font-mono">{getColumnOrders(key).length}</span>
+          {Object.entries(columns).map(([key, col]) => {
+            // Calculamos os pedidos desta coluna antes de renderizar
+            const ordersInColumn = getColumnOrders(key);
+
+            // 2. ALTERAÇÃO UX: Se for 'pending' e estiver vazia, não renderiza nada (retorna null)
+            if (key === 'pending' && ordersInColumn.length === 0) return null;
+
+            return (
+              <div key={key} className={`flex-1 flex flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
+                <div className="p-3 border-b border-black/5 font-bold flex justify-between items-center">
+                  <span className={col.color.split(' ')[2]}>{col.label}</span>
+                  <span className="bg-white/50 px-2 py-0.5 rounded text-xs text-black/60 font-mono">{ordersInColumn.length}</span>
+                </div>
+                <div className="p-2 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
+                  {ordersInColumn.map(order => (
+                    <OrderCard 
+                      key={order.id} 
+                      order={order} 
+                      currentStatus={key}
+                      isProcessing={processingId === order.id}
+                      onNext={() => {
+                          if(key === 'pending') handleStatusChange(order, 'Em Preparo')
+                          if(key === 'preparing') handleStatusChange(order, 'Saiu para entrega')
+                          if(key === 'delivery') handleStatusChange(order, 'Concluido')
+                      }}
+                      onPrint={() => handlePrint(order)}
+                      onView={() => setSelectedOrder(order)}
+                    />
+                  ))}
+                  {ordersInColumn.length === 0 && <div className="h-full flex items-center justify-center text-black/20 italic text-sm">Vazio</div>}
+                </div>
               </div>
-              <div className="p-2 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
-                {getColumnOrders(key).map(order => (
-                  <OrderCard 
-                    key={order.id} 
-                    order={order} 
-                    currentStatus={key}
-                    isProcessing={processingId === order.id}
-                    onNext={() => {
-                        if(key === 'pending') handleStatusChange(order, 'Em Preparo')
-                        if(key === 'preparing') handleStatusChange(order, 'Saiu para entrega')
-                        if(key === 'delivery') handleStatusChange(order, 'Concluido')
-                    }}
-                    onPrint={() => handlePrint(order)}
-                    onView={() => setSelectedOrder(order)}
-                  />
-                ))}
-                {getColumnOrders(key).length === 0 && <div className="h-full flex items-center justify-center text-black/20 italic text-sm">Vazio</div>}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
       {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />}
@@ -244,11 +248,15 @@ export default function Pedidos() {
 function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing }) {
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+    
+    // 4. ALTERAÇÃO UX: Mostra display_id (numero curto ifood) ou o ID se não tiver
+    const displayId = order.display_id || String(order.id).slice(0,4);
+
     return (
         <div className={`bg-white p-3 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow cursor-pointer relative group ${isProcessing ? 'opacity-70' : ''}`}>
             <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-1">
-                    <span className="font-bold text-slate-800">#{order.display_id || String(order.id).slice(0,4)}</span>
+                    <span className="font-bold text-slate-800">#{displayId}</span>
                     {isIfood && <img src="https://cdn.icon-icons.com/icons2/2699/PNG/512/ifood_logo_icon_170304.png" className="w-4 h-4" alt="iFood"/>}
                 </div>
                 <div className="flex items-center gap-2">
@@ -257,7 +265,9 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
                 </div>
             </div>
             <div className="text-sm font-medium text-slate-700 truncate mb-2">{order.customer_name || 'Cliente Balcão'}</div>
-            <div className="text-xs text-slate-500 mb-3 line-clamp-2">{order.sale_items?.map(i => `${i.quantity}x ${i.product?.name}`).join(', ')}</div>
+            
+            {/* 3. ALTERAÇÃO UX: Lista de itens removida do card para limpeza */}
+
             {order.sale_items?.some(i => !i.product) && <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1 rounded mb-2 w-fit"><AlertTriangle size={10} /> Item s/ vínculo</div>}
             <div className="flex justify-between items-center border-t border-slate-100 pt-2">
                 <span className="font-bold text-green-700">R$ {Number(order.total).toFixed(2)}</span>
