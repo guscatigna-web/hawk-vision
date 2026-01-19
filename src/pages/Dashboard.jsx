@@ -8,21 +8,23 @@ import { SortableWidget } from '../components/dashboard/SortableWidget'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 
-const DEFAULT_LAYOUT = ['revenue', 'orders', 'tables', 'stock', 'salesChart', 'ifoodChart', 'paymentChart', 'topProducts']
+const DEFAULT_LAYOUT = ['revenue', 'orders', 'tables', 'stock', 'dailySales', 'salesChart', 'ifoodChart', 'paymentChart', 'topProducts']
 
 export default function Dashboard() {
   const { user } = useAuth()
   
-  // Filtro de Data
   const [dateRange, setDateRange] = useState({
     start: new Date().toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
   })
 
-  // Métricas
   const [metrics, setMetrics] = useState({ 
     todayRevenue: 0, 
-    ticketMedio: 0, 
+    revenuePaid: 0, 
+    revenueOpen: 0, 
+    ticketMedio: 0,
+    ticketMedioLocal: 0,
+    ticketMedioIfood: 0,
     lowStockCount: 0, 
     activeCashiers: 0,
     openTables: 0,
@@ -30,7 +32,13 @@ export default function Dashboard() {
     kds: { kitchenQueue: 0, kitchenPrep: 0, barQueue: 0, barPrep: 0 }
   })
   
-  const [chartsData, setChartsData] = useState({ salesByHour: [], paymentMethods: [], topProducts: [], ifoodSalesByDay: [] })
+  const [chartsData, setChartsData] = useState({ 
+    salesByHour: [], 
+    paymentMethods: [], 
+    topProducts: [], 
+    ifoodSalesByDay: [],
+    dailySales: []
+  })
   
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
@@ -41,7 +49,6 @@ export default function Dashboard() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  // Carregar Layout
   useEffect(() => {
     const savedLayout = localStorage.getItem('hawk_dashboard_layout_v2')
     if (savedLayout) {
@@ -57,127 +64,179 @@ export default function Dashboard() {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      setLoading(true)
+      if (loading) setLoading(true)
       
       let companyId = null;
-      if (String(user.id) === '10') {
-          companyId = 1; 
-      } else {
+      if (String(user.id) === '10') companyId = 1; 
+      else {
           const { data: emp } = await supabase.from('employees').select('company_id').eq('auth_user_id', user.id).maybeSingle();
           companyId = emp?.company_id || user.user_metadata?.company_id;
       }
-      if (!companyId) throw new Error("Empresa não identificada");
+      if (!companyId) return;
 
       const start = `${dateRange.start}T00:00:00`
       const end = `${dateRange.end}T23:59:59`
 
-      // --- QUERIES ---
+      const date1 = new Date(dateRange.start);
+      const date2 = new Date(dateRange.end);
+      const daysDiff = Math.max(1, Math.ceil((date2 - date1) / (1000 * 60 * 60 * 24)) + 1);
+
       const [
-        { data: sales }, // Vendas
-        { data: saleItems }, // Itens
-        { data: allProducts }, // Produtos (Para cálculo de estoque)
-        { count: cashierCount }, // Caixas
-        { count: tablesCount }, // Mesas
-        { data: kdsItems } // KDS
+        { data: sales },
+        { data: allProducts },
+        { count: cashierCount },
+        { count: tablesCount },
+        { data: kdsItems }
       ] = await Promise.all([
-        supabase.from('sales').select('*').eq('company_id', companyId).gte('created_at', start).lte('created_at', end).neq('status', 'CANCELLED'),
-        supabase.from('sale_items').select('quantity, product:products(name)').eq('company_id', companyId).gte('created_at', start).lte('created_at', end),
-        
-        // Busca TODOS os produtos ativos para calcular via JS com segurança
-        supabase.from('products').select('stock_quantity, min_stock_quantity').eq('company_id', companyId).eq('active', true),
-
-        supabase.from('cashier_sessions').select('*', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'open'),
-        
-        // Mesas: Status 'aberto' e não delivery
-        supabase.from('sales').select('*', { count: 'exact', head: true }).eq('company_id', companyId).neq('channel', 'IFOOD').eq('status', 'aberto'),
-
-        supabase.from('sale_items')
-          .select('status, product:products(destination)')
+        supabase.from('sales')
+          .select(`
+            *, 
+            sale_payments(payment_method, amount),
+            sale_items(quantity, total, product_name)
+          `)
           .eq('company_id', companyId)
-          .in('status', ['pendente', 'preparando'])
-          .gte('created_at', start) 
+          .gte('created_at', start)
           .lte('created_at', end)
+          .neq('status', 'cancelado')
+          .neq('status', 'CANCELLED'),
+        
+        supabase.from('products').select('stock_quantity, min_stock_quantity').eq('company_id', companyId).eq('active', true),
+        supabase.from('cashier_sessions').select('*', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'open'),
+        supabase.from('sales').select('*', { count: 'exact', head: true }).eq('company_id', companyId).neq('channel', 'IFOOD').eq('status', 'aberto'),
+        supabase.from('sale_items').select('status, product:products(destination)').eq('company_id', companyId).in('status', ['pendente', 'pending', 'preparando', 'preparing']).gte('created_at', start).lte('created_at', end)
       ])
 
-      // --- PROCESSAMENTO ---
       const validSales = sales || []
-      const revenue = validSales.reduce((acc, s) => acc + Number(s.total), 0)
-      const ticketMedio = validSales.length ? revenue / validSales.length : 0
+      
+      let revenuePaid = 0;
+      let revenueOpen = 0;
 
-      // CÁLCULO DE ESTOQUE (Lógica Refinada)
+      const hoursMap = {}
+      const dailySalesMap = {}
+      const ifoodDayMap = {}
+      const payMap = {}
+      const prodMap = {} 
+
+      validSales.forEach(s => {
+          const val = Number(s.total);
+          
+          if (s.status === 'concluido' || s.status === 'completed') {
+              revenuePaid += val;
+          } else {
+              revenueOpen += val;
+          }
+
+          const dateStr = new Date(s.created_at).toLocaleDateString('pt-BR');
+          const h = new Date(s.created_at).getHours();
+
+          if (!dailySalesMap[dateStr]) dailySalesMap[dateStr] = { date: dateStr, total: 0, ifood: 0, loja: 0 };
+          dailySalesMap[dateStr].total += val;
+
+          if (!hoursMap[h]) hoursMap[h] = { hour: h, local: 0, ifood: 0 };
+          
+          if (s.channel === 'IFOOD') {
+              hoursMap[h].ifood += val;
+              ifoodDayMap[dateStr] = (ifoodDayMap[dateStr] || 0) + val;
+              dailySalesMap[dateStr].ifood += val;
+          } else {
+              hoursMap[h].local += val;
+              dailySalesMap[dateStr].loja += val;
+          }
+
+          if (s.status !== 'concluido' && s.status !== 'completed') {
+              payMap['AGUARDANDO PAGTO'] = (payMap['AGUARDANDO PAGTO'] || 0) + val;
+          } else {
+              if (s.sale_payments && s.sale_payments.length > 0) {
+                  s.sale_payments.forEach(sp => {
+                      const method = (sp.payment_method || 'NÃO IDENTIFICADO').toUpperCase();
+                      payMap[method] = (payMap[method] || 0) + Number(sp.amount);
+                  })
+              } else {
+                  let method = s.payment_method;
+                  if (!method && s.channel === 'IFOOD') method = 'IFOOD APP'; 
+                  if (!method) method = 'NÃO IDENTIFICADO';
+                  payMap[method.toUpperCase()] = (payMap[method.toUpperCase()] || 0) + val;
+              }
+          }
+
+          // --- PROCESSAMENTO DE TOP PRODUTOS (COM QUANTIDADE) ---
+          if (s.sale_items && s.sale_items.length > 0) {
+              s.sale_items.forEach(item => {
+                  const name = item.product_name || 'Item sem nome';
+                  const itemVal = Number(item.total) || 0;
+                  const itemQty = Number(item.quantity) || 0; // Captura Quantidade
+
+                  if (!prodMap[name]) {
+                      prodMap[name] = { total: 0, quantity: 0 };
+                  }
+                  
+                  prodMap[name].total += itemVal;
+                  prodMap[name].quantity += itemQty;
+              });
+          }
+      });
+
+      const totalRevenue = revenuePaid + revenueOpen;
+
       let lowStock = 0;
       if (allProducts) {
         lowStock = allProducts.filter(p => {
           const current = Number(p.stock_quantity || 0);
           const min = Number(p.min_stock_quantity || 0);
-          
-          // Regra: Só alerta se tiver um mínimo definido (>0) E o estoque for menor
           return min > 0 && current < min;
         }).length;
       }
 
-      // KDS Metrics
       const kdsMetrics = { kitchenQueue: 0, kitchenPrep: 0, barQueue: 0, barPrep: 0 }
       kdsItems?.forEach(item => {
         const dest = item.product?.destination?.toLowerCase() || 'cozinha'
-        if (dest.includes('bar') || dest.includes('copa')) {
-           kdsMetrics.barQueue++
-        } else {
-           kdsMetrics.kitchenQueue++
-        }
+        const isBar = dest.includes('bar') || dest.includes('copa')
+        const status = (item.status || '').toLowerCase()
+        const isPrep = status === 'preparando' || status === 'preparing'
+        if (isBar) { if (isPrep) kdsMetrics.barPrep++; else kdsMetrics.barQueue++; } 
+        else { if (isPrep) kdsMetrics.kitchenPrep++; else kdsMetrics.kitchenQueue++; }
       })
 
-      // Gráficos Vendas
-      const hoursMap = {}
-      const ifoodDayMap = {}
+      const localSales = validSales.filter(s => s.channel !== 'IFOOD');
+      const ifoodSales = validSales.filter(s => s.channel === 'IFOOD');
+      const tmLocal = localSales.length ? localSales.reduce((a,b)=>a+Number(b.total),0) / localSales.length : 0;
+      const tmIfood = ifoodSales.length ? ifoodSales.reduce((a,b)=>a+Number(b.total),0) / ifoodSales.length : 0;
 
-      validSales.forEach(s => {
-          const h = new Date(s.created_at).getHours()
-          if (!hoursMap[h]) hoursMap[h] = { hour: h, local: 0, ifood: 0 }
-          
-          const val = Number(s.total)
-          if (s.channel === 'IFOOD') {
-              hoursMap[h].ifood += val
-              const d = new Date(s.created_at).toLocaleDateString('pt-BR')
-              ifoodDayMap[d] = (ifoodDayMap[d] || 0) + val
-          } else {
-              hoursMap[h].local += val
-          }
-      })
-
-      // Pagamentos
-      const payMap = {}
-      validSales.forEach(s => {
-          let method = s.payment_method;
-          // Tenta inferir se for nulo, mas prioriza o dado real
-          if (!method && s.channel === 'IFOOD') method = 'iFood App';
-          if (!method) method = 'Não Identificado';
-          
-          method = method.toUpperCase();
-          payMap[method] = (payMap[method] || 0) + Number(s.total)
-      })
-
-      // Top Produtos
-      const prodMap = {}
-      saleItems?.forEach(i => {
-          const n = i.product?.name || 'Item Genérico'
-          prodMap[n] = (prodMap[n] || 0) + i.quantity
-      })
+      const salesByHour = Object.values(hoursMap).map(h => ({
+          hour: h.hour,
+          local: h.local / daysDiff,
+          ifood: h.ifood / daysDiff
+      })).sort((a,b) => a.hour - b.hour);
 
       setMetrics({
-        todayRevenue: revenue,
-        ticketMedio,
-        totalOrders: validSales.length,
+        todayRevenue: totalRevenue,
+        revenuePaid,
+        revenueOpen,
+        ticketMedio: validSales.length ? totalRevenue / validSales.length : 0,
+        ticketMedioLocal: tmLocal,
+        ticketMedioIfood: tmIfood,
         lowStockCount: lowStock,
         activeCashiers: cashierCount || 0,
         openTables: tablesCount || 0,
+        totalOrders: validSales.length,
         kds: kdsMetrics
       })
 
       setChartsData({
-        salesByHour: Object.values(hoursMap).sort((a,b) => a.hour - b.hour),
-        paymentMethods: Object.keys(payMap).map(k => ({ name: k, value: payMap[k] })),
-        topProducts: Object.entries(prodMap).map(([name, qtd]) => ({ name, qtd })).sort((a,b) => b.qtd - a.qtd).slice(0, 5),
+        salesByHour,
+        dailySales: Object.values(dailySalesMap).sort((a, b) => {
+            const [dA, mA, yA] = a.date.split('/').map(Number);
+            const [dB, mB, yB] = b.date.split('/').map(Number);
+            return new Date(yA, mA-1, dA) - new Date(yB, mB-1, dB);
+        }),
+        paymentMethods: Object.keys(payMap).map(k => ({ name: k, value: payMap[k] })).sort((a,b) => b.value - a.value),
+        
+        // Mapeia tanto o total quanto a quantidade
+        topProducts: Object.entries(prodMap)
+            .map(([name, data]) => ({ name, total: data.total, quantity: data.quantity }))
+            .sort((a,b) => b.total - a.total)
+            .slice(0, 5),
+            
         ifoodSalesByDay: Object.entries(ifoodDayMap).map(([date, total]) => ({ date, total }))
       })
 
@@ -187,9 +246,18 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [user, dateRange])
+  }, [user, dateRange, loading])
 
   useEffect(() => { fetchMetrics() }, [fetchMetrics])
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('dashboard-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => fetchMetrics())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sale_items' }, () => fetchMetrics())
+      .subscribe();
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchMetrics]);
 
   const handleDragEnd = (event) => {
     const { active, over } = event
@@ -213,7 +281,7 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-sm text-slate-500">Visão Geral</p>
+          <p className="text-sm text-slate-500">Visão Geral & Financeira</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
@@ -260,7 +328,7 @@ export default function Dashboard() {
                 {items.map(id => {
                     const WidgetConfig = WIDGET_REGISTRY[id]
                     if (!WidgetConfig) return null
-                    const widgetData = { ...metrics, salesByHour: chartsData.salesByHour, paymentMethods: chartsData.paymentMethods, topProducts: chartsData.topProducts, ifoodSalesByDay: chartsData.ifoodSalesByDay }
+                    const widgetData = { ...metrics, salesByHour: chartsData.salesByHour, paymentMethods: chartsData.paymentMethods, topProducts: chartsData.topProducts, ifoodSalesByDay: chartsData.ifoodSalesByDay, dailySales: chartsData.dailySales }
                     return (
                         <SortableWidget key={id} id={id} isEditing={isEditing} onRemove={(rid) => setItems(items.filter(i => i !== rid))} colSpan={WidgetConfig.defaultColSpan}>
                             <WidgetConfig.component data={widgetData} />

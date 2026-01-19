@@ -4,18 +4,30 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ea1d2c']
 
-// WIDGET 1: Faturamento (Visual Original)
+// WIDGET 1: Faturamento
 export const RevenueWidget = ({ data }) => (
-  <StatCard 
-    title="Faturamento"
-    value={`R$ ${data.todayRevenue?.toFixed(2) || '0.00'}`}
-    icon={<DollarSign size={20} className="text-green-600" />}
-    color="bg-green-600"
-    description={data.ticketMedio > 0 ? `Ticket Médio: R$ ${data.ticketMedio.toFixed(2)}` : 'Sem vendas'}
-  />
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col justify-between">
+      <div className="flex justify-between items-start mb-2">
+        <span className="text-sm font-medium text-slate-500">Vendas Totais</span>
+        <div className="p-2 bg-green-100 rounded-lg text-green-600"><DollarSign size={20} /></div>
+      </div>
+      <div>
+        <h3 className="text-2xl font-bold text-slate-800 mb-2">R$ {data.todayRevenue?.toFixed(2)}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-green-50 p-1.5 rounded text-green-800 border border-green-100">
+                <span className="block font-bold">Recebido</span>
+                R$ {data.revenuePaid?.toFixed(2)}
+            </div>
+            <div className="bg-yellow-50 p-1.5 rounded text-yellow-800 border border-yellow-100">
+                <span className="block font-bold">Aberto/Mesa</span>
+                R$ {data.revenueOpen?.toFixed(2)}
+            </div>
+        </div>
+      </div>
+  </div>
 )
 
-// WIDGET 2: Itens KDS (Visual Original)
+// WIDGET 2: Itens KDS
 export const OrdersWidget = ({ data }) => {
   return (
     <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col justify-between">
@@ -26,17 +38,23 @@ export const OrdersWidget = ({ data }) => {
         </div>
       </div>
       <div>
-        <h3 className="text-2xl font-bold text-slate-800 mb-2">
-          {data.kds?.kitchenQueue + data.kds?.barQueue || 0}
+        <h3 className="text-2xl font-bold text-slate-800 mb-3">
+          {data.kds?.kitchenQueue + data.kds?.barQueue + data.kds?.kitchenPrep + data.kds?.barPrep || 0} <span className="text-xs font-normal text-slate-400">itens</span>
         </h3>
-        <div className="space-y-1">
-            <div className="flex justify-between text-xs text-slate-600 bg-slate-50 p-1 rounded">
-                <span className="flex items-center gap-1"><Utensils size={12}/> Cozinha</span>
-                <span className="font-bold">{data.kds?.kitchenQueue || 0}</span>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-blue-50 p-2 rounded text-blue-900">
+                <div className="flex items-center gap-1 font-bold mb-1"><Utensils size={12}/> Cozinha</div>
+                <div className="flex justify-between">
+                    <span>Fila: <b>{data.kds?.kitchenQueue}</b></span>
+                    <span>Prep: <b>{data.kds?.kitchenPrep}</b></span>
+                </div>
             </div>
-            <div className="flex justify-between text-xs text-slate-600 bg-slate-50 p-1 rounded">
-                <span className="flex items-center gap-1"><Beer size={12}/> Bar</span>
-                <span className="font-bold">{data.kds?.barQueue || 0}</span>
+            <div className="bg-purple-50 p-2 rounded text-purple-900">
+                <div className="flex items-center gap-1 font-bold mb-1"><Beer size={12}/> Bar</div>
+                <div className="flex justify-between">
+                    <span>Fila: <b>{data.kds?.barQueue}</b></span>
+                    <span>Prep: <b>{data.kds?.barPrep}</b></span>
+                </div>
             </div>
         </div>
       </div>
@@ -44,7 +62,7 @@ export const OrdersWidget = ({ data }) => {
   )
 }
 
-// WIDGET 3: Mesas (Visual Original)
+// WIDGET 3: Mesas
 export const TablesWidget = ({ data }) => (
   <StatCard 
     title="Mesas Abertas"
@@ -55,7 +73,7 @@ export const TablesWidget = ({ data }) => (
   />
 )
 
-// WIDGET 4: Estoque (Visual Original)
+// WIDGET 4: Estoque
 export const StockWidget = ({ data }) => (
   <StatCard 
     title="Alerta Estoque"
@@ -66,7 +84,7 @@ export const StockWidget = ({ data }) => (
   />
 )
 
-// WIDGET 5: Caixas (Visual Original)
+// WIDGET 5: Caixas
 export const CashiersWidget = ({ data }) => (
   <StatCard 
     title="Caixas Ativos"
@@ -77,24 +95,24 @@ export const CashiersWidget = ({ data }) => (
   />
 )
 
-// WIDGET 6: Gráfico Vendas (ATUALIZADO PARA STACKED)
-export const SalesChartWidget = ({ data }) => (
+// WIDGET 6: Vendas por Dia
+export const DailySalesWidget = ({ data }) => (
   <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col">
     <h3 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-      <Clock size={18} /> Vendas por Horário
+      <Calendar size={18} /> Vendas por Dia
     </h3>
     <div className="flex-1 min-h-[200px]">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data.salesByHour || []}>
+        <BarChart data={data.dailySales || []}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="hour" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}h`} />
+          <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(d) => d.split('/').slice(0,2).join('/')} />
           <YAxis fontSize={12} tickLine={false} axisLine={false} />
           <Tooltip 
-            formatter={(value) => [`R$ ${value}`, 'Venda']}
+            formatter={(value) => [`R$ ${value.toFixed(2)}`, 'Venda']}
             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
           />
           <Legend />
-          <Bar dataKey="local" name="Local" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
+          <Bar dataKey="loja" name="Loja" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
           <Bar dataKey="ifood" name="iFood" stackId="a" fill="#ea1d2c" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -102,11 +120,33 @@ export const SalesChartWidget = ({ data }) => (
   </div>
 )
 
-// WIDGET 7: Gráfico iFood (NOVO)
+// WIDGET 7: Gráfico Vendas por Hora
+export const SalesChartWidget = ({ data }) => (
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col">
+    <h3 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
+      <Clock size={18} /> Vendas por Horário <span className="text-xs font-normal text-slate-400 ml-1">(Média do Período)</span>
+    </h3>
+    <div className="flex-1 min-h-[200px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data.salesByHour || []}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="hour" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}h`} />
+          <YAxis fontSize={12} tickLine={false} axisLine={false} />
+          <Tooltip formatter={(value) => [`R$ ${value.toFixed(2)}`, 'Média']} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+          <Legend />
+          <Bar dataKey="local" name="Loja" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
+          <Bar dataKey="ifood" name="iFood" stackId="a" fill="#ea1d2c" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  </div>
+)
+
+// WIDGET 8: Gráfico iFood
 export const IfoodChartWidget = ({ data }) => (
   <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col">
     <h3 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-      <Bike size={18} className="text-red-600" /> Performance iFood
+      <Bike size={18} className="text-red-600" /> Performance iFood (Período)
     </h3>
     <div className="flex-1 min-h-[200px]">
       {data.ifoodSalesByDay && data.ifoodSalesByDay.length > 0 ? (
@@ -130,7 +170,7 @@ export const IfoodChartWidget = ({ data }) => (
   </div>
 )
 
-// WIDGET 8: Pagamentos (ORIGINAL MANTIDO - Mostra todos os tipos)
+// WIDGET 9: Pagamentos
 export const PaymentChartWidget = ({ data }) => (
   <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col">
     <h3 className="text-lg font-semibold text-slate-700 mb-2 flex items-center gap-2">
@@ -142,52 +182,63 @@ export const PaymentChartWidget = ({ data }) => (
            <Pie
              data={data.paymentMethods}
              cx="50%"
-             cy="50%"
-             innerRadius={60}
-             outerRadius={80}
+             cy="45%"
+             innerRadius={45}
+             outerRadius={65}
              paddingAngle={5}
              dataKey="value"
            >
              {data.paymentMethods?.map((entry, index) => (
-               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+               <Cell key={`cell-${index}`} fill={entry.name === 'AGUARDANDO PAGTO' ? '#cbd5e1' : COLORS[index % COLORS.length]} />
              ))}
            </Pie>
            <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
-           <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{fontSize: '11px'}}/>
+           <Legend 
+                layout="horizontal" 
+                verticalAlign="bottom" 
+                align="center" 
+                wrapperStyle={{fontSize: '10px', bottom: 0}}
+           />
          </PieChart>
        </ResponsiveContainer>
         {(!data.paymentMethods || data.paymentMethods.length === 0) && (
-          <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">
-              Sem dados
-          </div>
+          <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">Sem dados</div>
         )}
     </div>
   </div>
 )
 
-// WIDGET 9: Top Produtos (Visual Original)
+// WIDGET 10: Top Produtos (COM QUANTIDADE)
 export const TopProductsWidget = ({ data }) => (
   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full">
       <h3 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-        <ArrowUpRight size={18} /> Top Produtos
+        <ArrowUpRight size={18} /> Top Produtos (Por Receita)
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {data.topProducts?.length > 0 ? (
           data.topProducts.map((prod, idx) => (
-            <div key={idx} className="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col items-center text-center hover:border-blue-200 transition-colors">
-                <span className={`text-2xl font-bold ${idx === 0 ? 'text-amber-500' : 'text-slate-700'}`}>
-                  {prod.qtd}
+            <div key={idx} className="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col items-center text-center hover:border-blue-200 transition-colors relative overflow-hidden">
+                <span className={`text-xl font-bold ${idx === 0 ? 'text-amber-600' : 'text-slate-700'}`}>
+                  R$ {prod.total.toFixed(2)}
                 </span>
-                <span className="text-xs text-slate-500 uppercase font-bold mt-1 line-clamp-2" title={prod.name}>
+                
+                {/* QUANTIDADE ADICIONADA AQUI */}
+                <span className="text-xs text-slate-400 font-medium mb-1">
+                  {prod.quantity} un.
+                </span>
+
+                <span className="text-xs text-slate-500 uppercase font-bold line-clamp-2" title={prod.name}>
                   {prod.name}
                 </span>
-                {idx === 0 && <span className="mt-2 text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1"><Flame size={10}/> Campeão</span>}
+                {idx === 0 && (
+                    <div className="absolute top-0 right-0 bg-amber-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl-lg">
+                        <Flame size={10} className="inline mr-1"/> TOP 1
+                    </div>
+                )}
             </div>
           ))
         ) : (
-          <div className="col-span-5 text-center text-slate-400 text-sm py-8">
-             Nenhum produto vendido.
-          </div>
+          <div className="col-span-5 text-center text-slate-400 text-sm py-8">Nenhum produto vendido.</div>
         )}
       </div>
   </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { supabase } from '../lib/supabase'; 
 
-import { Store, Link as LinkIcon, Save, Loader2, CheckCircle, AlertCircle, RefreshCw, HelpCircle, ArrowRight } from 'lucide-react';
+import { Store, Link as LinkIcon, Save, Loader2, CheckCircle, AlertCircle, RefreshCw, HelpCircle, ArrowRight, DollarSign } from 'lucide-react';
 
 export default function IfoodConfig() {
   const navigate = useNavigate(); 
@@ -73,7 +73,8 @@ export default function IfoodConfig() {
         headers: {
           'Authorization': `Bearer ${session?.access_token}`,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({ action: 'init-auth' }) // Garantindo action no body
       });
 
       if (!response.ok) {
@@ -115,6 +116,7 @@ export default function IfoodConfig() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
+          action: 'exchange', // Garantindo action no body
           authCode: userCode, 
           companyId, 
           verifier 
@@ -169,14 +171,24 @@ export default function IfoodConfig() {
               <p><strong>Merchant ID:</strong> {merchantDetails?.id}</p>
               <p><strong>Última Sincronização:</strong> {new Date(merchantDetails?.lastSync).toLocaleString()}</p>
               
-              <div className="pt-4 mt-4 border-t border-green-200">
-                {/* --- CAMINHO CORRIGIDO AQUI --- */}
+              <div className="pt-4 mt-4 border-t border-green-200 space-y-2">
+                {/* Botão de Vinculação */}
                 <button 
                   onClick={() => navigate('/ifood-menu')}
                   className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-indigo-700 flex justify-center items-center gap-2 transition-colors shadow-sm"
                 >
                   <span className="text-lg">🍔</span> 
                   Vincular Produtos do Cardápio
+                  <ArrowRight size={16} />
+                </button>
+
+                {/* NOVO: Botão de Gestão de Preços e Pausas */}
+                <button 
+                  onClick={() => navigate('/ifood-cardapio')}
+                  className="w-full bg-white text-indigo-700 border border-indigo-200 py-2 px-4 rounded-lg font-medium hover:bg-indigo-50 flex justify-center items-center gap-2 transition-colors shadow-sm"
+                >
+                  <DollarSign size={16} /> 
+                  Gerenciar Preços e Pausas
                   <ArrowRight size={16} />
                 </button>
               </div>

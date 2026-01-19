@@ -25,6 +25,7 @@ import { Cozinha } from './pages/Cozinha'
 import { Bar } from './pages/Bar'
 import IfoodMenu from './pages/IfoodMenu';
 import IfoodConfig from './pages/IfoodConfig';
+import CardapioIfood from './pages/CardapioIfood'; // Nova Tela Importada
 
 export default function App() {
   return (
@@ -52,8 +53,11 @@ export default function App() {
               <Route path="relatorios" element={<Relatorios />} />
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="configuracoes" element={<Configuracoes />} />
+              
+              {/* Rotas iFood */}
               <Route path="/config/ifood" element={<IfoodConfig />} />
               <Route path="/ifood-menu" element={<IfoodMenu />} />
+              <Route path="/ifood-cardapio" element={<CardapioIfood />} /> {/* Nova Rota */}
               <Route path="/pedidos" element={<Pedidos />} />
               
               {/* KDS */}
