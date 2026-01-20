@@ -4,6 +4,7 @@ import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { KitchenTicket } from '../components/KitchenTicket'
+import { PrinterService } from '../services/printer' // <--- NOVO IMPORT
 
 // Motivos padrão exigidos pela API do iFood
 const CANCELLATION_REASONS = [
@@ -47,6 +48,7 @@ export default function Pedidos() {
     completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' }
   }
 
+  // Effect para Impressão Fallback (Navegador)
   useEffect(() => {
     if (printData && printTrigger > 0) {
         const timer = setTimeout(() => { window.print(); }, 500);
@@ -129,34 +131,57 @@ export default function Pedidos() {
     } catch (error) { console.error(error); } finally { setLoading(false); }
   }, [user, fetchIfoodSettings, getSearchColumn]); 
 
-  const handlePrint = useCallback((order) => {
-    const kitchenItems = [];
-    const barItems = [];
-    order.sale_items.forEach(item => {
-        const name = item.product?.name?.toLowerCase() || '';
-        if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink')) {
-            barItems.push(item);
-        } else {
-            kitchenItems.push(item);
+  // --- NOVA FUNÇÃO DE IMPRESSÃO HÍBRIDA (QZ TRAY + FALLBACK) ---
+  const handlePrint = useCallback(async (order) => {
+    const toastId = toast.loading("Enviando para impressora...");
+    
+    try {
+        // 1. Tenta Imprimir Direto (Silencioso)
+        await PrinterService.printOrder(order);
+        
+        toast.success("Enviado para impressão!", { id: toastId });
+        
+        // Efeito sonoro
+        if (audioEnabled) {
+            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+            audio.play().catch(() => {});
         }
-    });
 
-    const tickets = [];
-    if (kitchenItems.length > 0) tickets.push({ sector: 'COZINHA', items: kitchenItems });
-    if (barItems.length > 0) tickets.push({ sector: 'BAR', items: barItems });
+    } catch (error) {
+        console.error("Erro QZ Tray (Usando Fallback):", error);
+        
+        // 2. Se falhar, usa o modo navegador (Janela do Windows)
+        toast.error("QZ Tray offline. Usando modo janela.", { id: toastId });
+        
+        // Prepara dados para o componente KitchenTicket (Fallback)
+        const kitchenItems = [];
+        const barItems = [];
+        order.sale_items.forEach(item => {
+            const name = item.product?.name?.toLowerCase() || '';
+            if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink')) {
+                barItems.push(item);
+            } else {
+                kitchenItems.push(item);
+            }
+        });
 
-    const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
+        const tickets = [];
+        if (kitchenItems.length > 0) tickets.push({ sector: 'COZINHA', items: kitchenItems });
+        if (barItems.length > 0) tickets.push({ sector: 'BAR', items: barItems });
 
-    const orderInfo = {
-        type: order.channel === 'IFOOD' ? 'IFOOD' : 'MESA',
-        identifier: order.channel === 'IFOOD' ? displayId : 'BALCÃO',
-        customer: order.customer_name,
-        waiter: 'Sistema'
-    };
+        const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
 
-    setPrintData({ tickets, orderInfo, date: new Date().toLocaleString() });
-    setPrintTrigger(prev => prev + 1);
-  }, []);
+        const orderInfo = {
+            type: order.channel === 'IFOOD' ? 'IFOOD' : 'MESA',
+            identifier: order.channel === 'IFOOD' ? displayId : 'BALCÃO',
+            customer: order.customer_name,
+            waiter: 'Sistema'
+        };
+
+        setPrintData({ tickets, orderInfo, date: new Date().toLocaleString() });
+        setPrintTrigger(prev => prev + 1); // Dispara o window.print do navegador
+    }
+  }, [audioEnabled]);
 
   const handleStatusChange = useCallback(async (order, newStatus, cancelDetails = null) => {
     if (processingIdRef.current === order.id) return;
@@ -175,7 +200,6 @@ export default function Pedidos() {
                     companyId: currentCompanyId, 
                     ifoodOrderId: order.ifood_order_id, 
                     status: newStatus,
-                    // Se for cancelamento, envia o objeto 'reason' necessário para o iFood
                     reason: cancelDetails 
                 }
             });
@@ -189,9 +213,7 @@ export default function Pedidos() {
         if (order.channel !== 'IFOOD') toast.success(`Movido para: ${newStatus}`, { id: toastId });
         
         if (newStatus === 'Em Preparo') {
-            handlePrint(order);
-            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-            audio.play().catch(e => console.error(e));
+            handlePrint(order); // Chama a nova função de impressão
         }
         
         fetchOrders(); 
@@ -201,11 +223,11 @@ export default function Pedidos() {
     } finally {
         setProcessingId(null);
         processingIdRef.current = null;
-        setOrderToCancel(null); // Fecha modal de cancelamento se estiver aberto
+        setOrderToCancel(null); 
     }
   }, [user, getSearchColumn, handlePrint, fetchOrders]); 
 
-  // --- O CÉREBRO DO AUTO-ACEITE (ROBOT OPERATOR) ---
+  // --- O CÉREBRO DO AUTO-ACEITE ---
   useEffect(() => {
     if (loading || orders.length === 0) return;
 
@@ -340,7 +362,6 @@ export default function Pedidos() {
       {/* Modal de Cancelamento (Com Motivos) */}
       {orderToCancel && (
         <CancellationModal 
-            order={orderToCancel}
             onClose={() => setOrderToCancel(null)}
             onConfirm={(reason) => handleStatusChange(orderToCancel, 'Cancelado', reason)}
         />
@@ -405,7 +426,6 @@ function OrderModal({ order, onClose, onInitCancellation }) {
                     <div className="flex justify-between items-center pt-4 border-t-2 border-slate-100"><span className="text-lg font-bold text-slate-600">Total</span><span className="text-2xl font-bold text-green-600">R$ {Number(order.total).toFixed(2)}</span></div>
                 </div>
                 <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-                    {/* Botão de Cancelamento para Pedidos iFood */}
                     {order.channel === 'IFOOD' ? (
                         <button onClick={onInitCancellation} className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg font-bold text-sm hover:bg-red-100 flex items-center gap-2">
                             <Ban size={16}/> Cancelar Pedido
