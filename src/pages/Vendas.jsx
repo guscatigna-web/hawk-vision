@@ -90,6 +90,7 @@ export function Vendas() {
   const [existingItems, setExistingItems] = useState([]) 
   const [existingTotal, setExistingTotal] = useState(0)
   const [currentSaleId, setCurrentSaleId] = useState(saleIdParam || null)
+  const [currentSale, setCurrentSale] = useState(null) // <--- ESTADO PARA DADOS DA VENDA (PAX)
 
   const [customerName, setCustomerName] = useState('')
   const [customerDoc, setCustomerDoc] = useState('')
@@ -148,7 +149,13 @@ export function Vendas() {
     setExistingItems(data || [])
     const total = data?.reduce((acc, item) => acc + (item.quantity * item.unit_price), 0) || 0
     setExistingTotal(total)
-    if (saleId) fetchPayments(saleId)
+    
+    if (saleId) {
+        // Busca também os dados da venda pai (para pegar people_count)
+        const { data: saleData } = await supabase.from('sales').select('*').eq('id', saleId).single()
+        setCurrentSale(saleData)
+        fetchPayments(saleId)
+    }
   }, [fetchPayments])
 
   useEffect(() => {
@@ -418,8 +425,8 @@ export function Vendas() {
       }
   }
 
-  // --- FINALIZAÇÃO DE VENDA ---
-  const handleFinishSale = async () => {
+  // --- FINALIZAÇÃO DE VENDA (Atualizado para receber PAX) ---
+  const handleFinishSale = async (finalPeopleCount) => {
     if (remainingDue > 0.01) return toast.error(`Ainda faltam R$ ${remainingDue.toFixed(2)}`)
     
     const hasPendingKitchenItems = existingItems.some(item => ['pending', 'preparing'].includes(item.status))
@@ -446,6 +453,7 @@ export function Vendas() {
       await supabase.from('sales').update({
         status: 'concluido',
         total: grandTotalFinal,
+        people_count: finalPeopleCount || 1, // <--- ATUALIZA COM O VALOR DO MODAL
         discount_value: discountValue,
         discount_reason: discount.reason || (discountValue > 0 ? 'Manual' : null),
         customer_name: customerName || 'Varejo',
@@ -517,6 +525,7 @@ export function Vendas() {
     setCart([])
     setExistingItems([])
     setCurrentSaleId(null)
+    setCurrentSale(null) // Limpa venda atual
     setCustomerName('')
     setCustomerDoc('')
     setPayments([])
@@ -579,8 +588,9 @@ export function Vendas() {
           discountReason={discount.reason}
           onAddPayment={handleAddPayment}
           onRemovePayment={handleRemovePayment}
-          onFinishSale={handleFinishSale}
+          onFinishSale={handleFinishSale} // Passa a função que recebe (finalPeopleCount)
           isProcessing={isProcessing}
+          currentPeopleCount={currentSale?.people_count || 1} // Envia valor atual para o modal
         />
       )}
 

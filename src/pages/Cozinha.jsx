@@ -39,6 +39,7 @@ export function Cozinha() {
         startTime = yesterday.toISOString()
       }
 
+      // ATUALIZADO: Buscando created_at dos ITENS
       const { data, error } = await supabase
         .from('sales')
         .select(`
@@ -48,6 +49,7 @@ export function Cozinha() {
             quantity,
             status,
             product_name,
+            created_at, 
             product: products (name, unit, destination)
           )
         `)
@@ -81,6 +83,7 @@ export function Cozinha() {
   }
 
   const getWaitTime = (dateString) => {
+    if (!dateString) return 0
     const start = new Date(dateString)
     const now = new Date()
     return Math.floor((now - start) / 60000)
@@ -103,17 +106,33 @@ export function Cozinha() {
     });
   };
 
-  const pendingOrders = orders.map(order => ({
-    ...order, 
-    kitchenItems: filterForKitchen(order, 'pending'),
-    hasUnmapped: order.sale_items.some(i => !i.product)
-  })).filter(order => order.kitchenItems.length > 0) 
+  // Helper para pegar a data do item MAIS ANTIGO do lote (para o timer)
+  const getBatchStartTime = (items) => {
+    if (!items || items.length === 0) return new Date().toISOString()
+    // Ordena itens e pega o mais antigo
+    const sorted = [...items].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    return sorted[0].created_at
+  }
 
-  const preparingOrders = orders.map(order => ({
-    ...order, 
-    kitchenItems: filterForKitchen(order, 'preparing'),
-    hasUnmapped: order.sale_items.some(i => !i.product)
-  })).filter(order => order.kitchenItems.length > 0)
+  const pendingOrders = orders.map(order => {
+    const kitchenItems = filterForKitchen(order, 'pending')
+    return {
+      ...order, 
+      kitchenItems,
+      batchTime: getBatchStartTime(kitchenItems), // Hora do pedido deste lote
+      hasUnmapped: order.sale_items.some(i => !i.product)
+    }
+  }).filter(order => order.kitchenItems.length > 0) 
+
+  const preparingOrders = orders.map(order => {
+    const kitchenItems = filterForKitchen(order, 'preparing')
+    return {
+      ...order, 
+      kitchenItems,
+      batchTime: getBatchStartTime(kitchenItems), // Hora do pedido deste lote
+      hasUnmapped: order.sale_items.some(i => !i.product)
+    }
+  }).filter(order => order.kitchenItems.length > 0)
 
 
   if (loading) return <div className="flex h-screen items-center justify-center text-slate-500">Carregando KDS...</div>
@@ -159,6 +178,7 @@ export function Cozinha() {
                 key={order.id} 
                 order={order} 
                 items={order.kitchenItems} 
+                startTime={order.batchTime} // Passa hora dos itens
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
@@ -186,6 +206,7 @@ export function Cozinha() {
                 key={order.id} 
                 order={order} 
                 items={order.kitchenItems} 
+                startTime={order.batchTime} // Passa hora dos itens
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'ready')} 
@@ -202,8 +223,9 @@ export function Cozinha() {
   )
 }
 
-function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
-    const mins = getWaitTime(order.created_at)
+function OrderCard({ order, items, startTime, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
+    // Calcula tempo baseado nos itens, não na mesa
+    const mins = getWaitTime(startTime || order.created_at)
     const itemIds = items.map(i => i.id)
 
     // LÓGICA DE CORES (GRADIENTE DE URGÊNCIA)

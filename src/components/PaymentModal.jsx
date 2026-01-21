@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Receipt, Banknote, CreditCard, QrCode, Trash2, Loader2, Check, Wallet } from 'lucide-react'
+import { X, Receipt, Banknote, CreditCard, QrCode, Trash2, Loader2, Check, Wallet, Users } from 'lucide-react'
 import { supabase } from '../lib/supabase' // Import necessário para buscar do banco
 
 export function PaymentModal({ 
@@ -16,9 +16,11 @@ export function PaymentModal({
   onAddPayment, 
   onRemovePayment, 
   onFinishSale, 
-  isProcessing 
+  isProcessing,
+  currentPeopleCount = 1 // Recebe o valor atual
 }) {
   const [amountInput, setAmountInput] = useState('')
+  const [peopleCount, setPeopleCount] = useState(currentPeopleCount) // Estado local para pax
   const [availableMethods, setAvailableMethods] = useState([])
   const [loadingMethods, setLoadingMethods] = useState(true)
 
@@ -54,6 +56,11 @@ export function PaymentModal({
     }
   }
 
+  // Wrapper para enviar o Nº Pessoas junto com a finalização
+  const handleFinish = () => {
+      onFinishSale(peopleCount) // Passa o pax atualizado de volta
+  }
+
   // 2. HELPER PARA ESCOLHER ÍCONE E COR BASEADO NO NOME
   const getMethodStyle = (name) => {
     const n = name.toLowerCase()
@@ -83,6 +90,25 @@ export function PaymentModal({
                 <span>R$ {(item.product.price * item.quantity).toFixed(2)}</span>
               </div>
             ))}
+          </div>
+
+          {/* CONTROLE DE PESSOAS & DIVISÃO DE CONTA (NOVO) */}
+          <div className="bg-white p-3 rounded-lg border border-slate-200 mb-4">
+             <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Users size={14}/> Pessoas</span>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => setPeopleCount(Math.max(1, peopleCount - 1))} className="w-6 h-6 bg-slate-100 rounded font-bold text-slate-600 hover:bg-slate-200">-</button>
+                    <span className="font-bold text-slate-800 w-4 text-center">{peopleCount}</span>
+                    <button onClick={() => setPeopleCount(peopleCount + 1)} className="w-6 h-6 bg-slate-100 rounded font-bold text-slate-600 hover:bg-slate-200">+</button>
+                </div>
+             </div>
+             {/* CÁLCULO DA DIVISÃO */}
+             <div className="flex justify-between items-center pt-2 border-t border-slate-100">
+                <span className="text-xs text-slate-400">Valor por pessoa:</span>
+                <span className="text-sm font-bold text-blue-600">
+                    R$ {(grandTotalFinal / (peopleCount || 1)).toFixed(2)}
+                </span>
+             </div>
           </div>
 
           <div className="space-y-2 border-t border-slate-200 pt-4">
@@ -208,7 +234,7 @@ export function PaymentModal({
             </div>
 
             <button 
-              onClick={onFinishSale}
+              onClick={handleFinish} // Usa o novo handler que envia as pessoas
               disabled={isProcessing || remainingDue > 0.01}
               className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex justify-center items-center gap-3 transition-all active:scale-[0.98]"
             >

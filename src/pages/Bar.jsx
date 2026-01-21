@@ -39,6 +39,7 @@ export function Bar() {
         startTime = yesterday.toISOString()
       }
 
+      // ATUALIZADO: Inclui created_at dos ITENS
       const { data, error } = await supabase
         .from('sales')
         .select(`
@@ -47,6 +48,7 @@ export function Bar() {
             id,
             quantity,
             status,
+            created_at,
             product: products (name, unit, destination)
           )
         `)
@@ -80,9 +82,17 @@ export function Bar() {
   }
 
   const getWaitTime = (dateString) => {
+    if (!dateString) return 0
     const start = new Date(dateString)
     const now = new Date()
     return Math.floor((now - start) / 60000)
+  }
+
+  // Helper: Pega a hora do item mais antigo do lote
+  const getBatchStartTime = (items) => {
+    if (!items || items.length === 0) return new Date().toISOString()
+    const sorted = [...items].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    return sorted[0].created_at
   }
 
   const pendingOrders = orders.map(order => {
@@ -90,7 +100,11 @@ export function Bar() {
       (item.status === 'pending') && 
       (item.product?.destination === 'bar')
     )
-    return { ...order, barItems: validItems }
+    return { 
+        ...order, 
+        barItems: validItems,
+        batchTime: getBatchStartTime(validItems) 
+    }
   }).filter(order => order.barItems.length > 0)
 
   const preparingOrders = orders.map(order => {
@@ -98,7 +112,11 @@ export function Bar() {
       (item.status === 'preparing') && 
       (item.product?.destination === 'bar')
     )
-    return { ...order, barItems: validItems }
+    return { 
+        ...order, 
+        barItems: validItems,
+        batchTime: getBatchStartTime(validItems)
+    }
   }).filter(order => order.barItems.length > 0)
 
   if (loading) return <div className="flex h-screen items-center justify-center text-slate-500">Carregando Bar...</div>
@@ -143,6 +161,7 @@ export function Bar() {
                 key={order.id} 
                 order={order} 
                 items={order.barItems} 
+                startTime={order.batchTime} // Passa tempo dos itens
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
@@ -169,6 +188,7 @@ export function Bar() {
                 key={order.id} 
                 order={order} 
                 items={order.barItems} 
+                startTime={order.batchTime} // Passa tempo dos itens
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'ready')} 
@@ -184,8 +204,9 @@ export function Bar() {
   )
 }
 
-function BarOrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
-    const mins = getWaitTime(order.created_at)
+function BarOrderCard({ order, items, startTime, getWaitTime, alertTime, onAction, actionLabel, actionIcon, baseColor }) {
+    // Usa tempo do lote de itens
+    const mins = getWaitTime(startTime || order.created_at)
     const itemIds = items.map(i => i.id)
 
     // LÓGICA DE CORES (GRADIENTE DE URGÊNCIA)
