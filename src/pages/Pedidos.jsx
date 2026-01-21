@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings, XCircle, AlertCircle } from 'lucide-react'
+import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings, XCircle, AlertCircle, Monitor } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { KitchenTicket } from '../components/KitchenTicket'
-import { PrinterService } from '../services/printer' // <--- NOVO IMPORT
+import { PrinterService } from '../services/printer'
 
 // Motivos padrão exigidos pela API do iFood
 const CANCELLATION_REASONS = [
@@ -21,8 +21,8 @@ const CANCELLATION_REASONS = [
 export default function Pedidos() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selectedOrder, setSelectedOrder] = useState(null) // Para Modal de Detalhes
-  const [orderToCancel, setOrderToCancel] = useState(null) // Para Modal de Cancelamento
+  const [selectedOrder, setSelectedOrder] = useState(null)
+  const [orderToCancel, setOrderToCancel] = useState(null)
   
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [cashierStatus, setCashierStatus] = useState('checking')
@@ -30,6 +30,12 @@ export default function Pedidos() {
   
   const [autoAcceptInfo, setAutoAcceptInfo] = useState({ enabled: false, loading: true })
   
+  // --- Estado KDS Sincronizado ---
+  const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
+
+  // Estado para guardar dados da empresa (Para impressão)
+  const [companyInfo, setCompanyInfo] = useState(null)
+
   const { user } = useAuth()
   const [processingId, setProcessingId] = useState(null)
   const processingIdRef = useRef(null) 
@@ -48,6 +54,29 @@ export default function Pedidos() {
     completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' }
   }
 
+  // Effect para Sincronizar KDS/Impressora entre abas
+  useEffect(() => {
+    const handleStorageChange = () => {
+        setUseKDS(localStorage.getItem('hawk_use_kds') === 'true')
+    }
+    window.addEventListener('storage', handleStorageChange)
+    // Listener customizado para a mesma aba (se necessário)
+    window.addEventListener('hawk_kds_change', handleStorageChange)
+    return () => {
+        window.removeEventListener('storage', handleStorageChange)
+        window.removeEventListener('hawk_kds_change', handleStorageChange)
+    }
+  }, [])
+
+  // Função para alternar modo
+  const toggleKDSMode = () => {
+    const newValue = !useKDS
+    setUseKDS(newValue)
+    localStorage.setItem('hawk_use_kds', newValue)
+    window.dispatchEvent(new Event('hawk_kds_change'))
+    toast(newValue ? "Modo KDS Ativado" : "Modo Impressora Ativado")
+  }
+
   // Effect para Impressão Fallback (Navegador)
   useEffect(() => {
     if (printData && printTrigger > 0) {
@@ -59,6 +88,14 @@ export default function Pedidos() {
   const getSearchColumn = useCallback((userId) => {
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
     return isUUID ? 'auth_user_id' : 'id';
+  }, []);
+
+  // Busca dados da empresa para o cabeçalho da nota
+  const fetchCompanyInfo = useCallback(async (companyId) => {
+      try {
+          const { data } = await supabase.from('company_settings').select('*').eq('company_id', companyId).maybeSingle();
+          if (data) setCompanyInfo(data);
+      } catch (e) { console.error("Erro company settings:", e); }
   }, []);
 
   const fetchIfoodSettings = useCallback(async (companyId) => {
@@ -102,7 +139,11 @@ export default function Pedidos() {
 
       if (!companyId) { setLoading(false); setErrorMsg("Empresa não vinculada."); return; }
 
-      if (!settingsFetched.current) { fetchIfoodSettings(companyId); settingsFetched.current = true; }
+      if (!settingsFetched.current) { 
+          fetchIfoodSettings(companyId); 
+          fetchCompanyInfo(companyId);
+          settingsFetched.current = true; 
+      }
 
       const { data: session } = await supabase.from('cashier_sessions').select('id').eq('company_id', companyId).eq('status', 'open').maybeSingle();
       if (!session) setCashierStatus('closed'); else setCashierStatus('open');
@@ -112,10 +153,10 @@ export default function Pedidos() {
       
       const { data, error } = await supabase
         .from('sales')
-        .select(`*, sale_items (quantity, unit_price, product:products(name, category_id))`)
+        .select(`*, sale_items (id, quantity, unit_price, product_name, product:products(name, category_id, destination))`)
         .eq('company_id', companyId)
         .gte('created_at', windowDate.toISOString())
-        .neq('status', 'cancelado') // Oculta cancelados do board principal
+        .neq('status', 'cancelado') 
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -129,48 +170,101 @@ export default function Pedidos() {
 
       setOrders(cleanOrders);
     } catch (error) { console.error(error); } finally { setLoading(false); }
-  }, [user, fetchIfoodSettings, getSearchColumn]); 
+  }, [user, fetchIfoodSettings, fetchCompanyInfo, getSearchColumn]); 
 
-  // --- NOVA FUNÇÃO DE IMPRESSÃO HÍBRIDA (QZ TRAY + FALLBACK) ---
+  // --- NOVA LÓGICA DE PRODUÇÃO (KDS vs IMPRESSORA) ---
   const handlePrint = useCallback(async (order) => {
-    const toastId = toast.loading("Enviando para impressora...");
+    const toastId = toast.loading(useKDS ? "Enviando para KDS..." : "Imprimindo Produção...");
     
-    try {
-        // 1. Tenta Imprimir Direto (Silencioso)
-        await PrinterService.printOrder(order);
-        
-        toast.success("Enviado para impressão!", { id: toastId });
-        
-        // Efeito sonoro
-        if (audioEnabled) {
-            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-            audio.play().catch(() => {});
-        }
+    const isIfood = order.channel === 'IFOOD';
+    const hasUnmappedItems = order.sale_items.some(i => !i.product);
+    const allItems = order.sale_items;
 
-    } catch (error) {
-        console.error("Erro QZ Tray (Usando Fallback):", error);
+    // 1. SEMPRE Imprime a Via de Expedição (Caixa/Motoboy) se for iFood
+    if (isIfood) {
+        try {
+            await PrinterService.printExpeditionTicket(order);
+        } catch (e) {
+            console.error("Erro ao imprimir expedição:", e);
+        }
+    }
+
+    // --- MODO KDS ---
+    if (useKDS) {
+        try {
+            // Atualiza status dos itens para 'pending' para aparecerem nas telas
+            const itemIds = order.sale_items.map(i => i.id);
+            if (itemIds.length > 0) {
+                await supabase.from('sale_items').update({ status: 'pending' }).in('id', itemIds);
+            }
+            toast.success("Enviado para telas KDS!", { id: toastId });
+        } catch (err) {
+            console.error(err);
+            toast.error("Erro ao enviar para KDS", { id: toastId });
+        }
+        return; 
+    }
+
+    // --- MODO IMPRESSORA ---
+    // Separação de Setores
+    const kitchenItems = [];
+    const barItems = [];
+    
+    // Se tem item não mapeado e é iFood, mandamos TUDO para AMBOS para garantir
+    if (hasUnmappedItems && isIfood) {
+        try {
+            await PrinterService.printSectorTicket(order, allItems, "COZINHA (COMPLETO)");
+            await PrinterService.printSectorTicket(order, allItems, "BAR (COMPLETO)");
+            toast.success("Produção Impressa (Completa)", { id: toastId });
+        } catch (error) {
+            console.error(error);
+            toast.error("Erro QZ Tray.", { id: toastId });
+            // Fallback Janela
+            setPrintData(order); // Passa o pedido completo para o fallback lidar
+            setPrintTrigger(p => p + 1);
+        }
+        return;
+    }
+
+    // Se tudo mapeado, separa bonitinho
+    order.sale_items.forEach(item => {
+        const dest = item.product?.destination?.toLowerCase() || '';
+        const name = (item.product?.name || item.product_name || '').toLowerCase();
         
-        // 2. Se falhar, usa o modo navegador (Janela do Windows)
-        toast.error("QZ Tray offline. Usando modo janela.", { id: toastId });
-        
-        // Prepara dados para o componente KitchenTicket (Fallback)
-        const kitchenItems = [];
-        const barItems = [];
-        order.sale_items.forEach(item => {
-            const name = item.product?.name?.toLowerCase() || '';
-            if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink')) {
+        if (dest === 'bar' || dest === 'copa') {
+            barItems.push(item);
+        } else if (dest === 'cozinha') {
+            kitchenItems.push(item);
+        } else {
+            // Fallback por palavra-chave
+            if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink') || name.includes('lata')) {
                 barItems.push(item);
             } else {
                 kitchenItems.push(item);
             }
-        });
+        }
+    });
 
+    try {
+        if (kitchenItems.length > 0) await PrinterService.printSectorTicket(order, kitchenItems, "COZINHA");
+        if (barItems.length > 0) await PrinterService.printSectorTicket(order, barItems, "BAR / COPA");
+        
+        toast.success("Produção Impressa (Separada)", { id: toastId });
+        
+        if (audioEnabled) {
+            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+            audio.play().catch(() => {});
+        }
+    } catch (error) {
+        console.error("Erro QZ Tray:", error);
+        toast.error("QZ Offline. Usando Janela.", { id: toastId });
+        
+        // Fallback Janela
         const tickets = [];
         if (kitchenItems.length > 0) tickets.push({ sector: 'COZINHA', items: kitchenItems });
         if (barItems.length > 0) tickets.push({ sector: 'BAR', items: barItems });
 
         const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
-
         const orderInfo = {
             type: order.channel === 'IFOOD' ? 'IFOOD' : 'MESA',
             identifier: order.channel === 'IFOOD' ? displayId : 'BALCÃO',
@@ -179,9 +273,21 @@ export default function Pedidos() {
         };
 
         setPrintData({ tickets, orderInfo, date: new Date().toLocaleString() });
-        setPrintTrigger(prev => prev + 1); // Dispara o window.print do navegador
+        setPrintTrigger(prev => prev + 1); 
     }
-  }, [audioEnabled]);
+  }, [useKDS, audioEnabled]);
+
+  // --- IMPRESSÃO DE RECIBO (VIA CLIENTE) ---
+  const handlePrintReceipt = useCallback(async (order) => {
+      const toastId = toast.loading("Imprimindo recibo...");
+      try {
+          await PrinterService.printCustomerReceipt(order, companyInfo);
+          toast.success("Recibo impresso!", { id: toastId });
+      } catch (error) {
+          console.error("Erro Recibo:", error);
+          toast.error("Erro QZ. Verifique conexão.", { id: toastId });
+      }
+  }, [companyInfo]);
 
   const handleStatusChange = useCallback(async (order, newStatus, cancelDetails = null) => {
     if (processingIdRef.current === order.id) return;
@@ -212,8 +318,9 @@ export default function Pedidos() {
         
         if (order.channel !== 'IFOOD') toast.success(`Movido para: ${newStatus}`, { id: toastId });
         
+        // --- GATILHO DE PRODUÇÃO AO CONFIRMAR ---
         if (newStatus === 'Em Preparo') {
-            handlePrint(order); // Chama a nova função de impressão
+            handlePrint(order); 
         }
         
         fetchOrders(); 
@@ -240,14 +347,15 @@ export default function Pedidos() {
     orders.forEach(order => {
         if (!processedOrderIds.current.has(order.id)) {
             processedOrderIds.current.add(order.id);
-            
             const isIfood = order.channel === 'IFOOD';
             const status = (order.status || '').toUpperCase();
 
-            if (isIfood && (status === 'PENDING' || status === 'PLACED') && autoAcceptInfo.enabled) {
-                console.log(`🤖 AUTO-ACEITE: Detectado pedido #${order.id}. Confirmando...`);
+            // Correção: Verifica se não está carregando config para não dar falso negativo
+            if (isIfood && (status === 'PENDING' || status === 'PLACED') && autoAcceptInfo.enabled && !autoAcceptInfo.loading) {
+                console.log(`🤖 AUTO-ACEITE: Pedido #${order.id}. Confirmando...`);
                 handleStatusChange(order, 'Em Preparo');
             }
+            // Se chegou já confirmado externamente
             else if (status === 'EM PREPARO' || status === 'CONFIRMED') {
                  handlePrint(order);
                  if (audioEnabled) {
@@ -257,7 +365,7 @@ export default function Pedidos() {
             }
         }
     });
-  }, [orders, loading, audioEnabled, autoAcceptInfo.enabled, handleStatusChange, handlePrint]);
+  }, [orders, loading, audioEnabled, autoAcceptInfo, handleStatusChange, handlePrint]);
 
   useEffect(() => {
     fetchOrders();
@@ -285,7 +393,13 @@ export default function Pedidos() {
 
   return (
     <div className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
-      {printData && <KitchenTicket tickets={printData.tickets} orderInfo={printData.orderInfo} date={printData.date} />}
+      {/* COMPONENTES DE FALLBACK (MODO JANELA) */}
+      {printData && (
+        <div className="hidden">
+             <KitchenTicket tickets={printData.tickets} orderInfo={printData.orderInfo} date={printData.date} />
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-slate-800">Gerenciador de Pedidos</h1>
@@ -293,6 +407,15 @@ export default function Pedidos() {
         </div>
         
         <div className="flex items-center gap-4">
+            {/* BOTÃO DE ALTERNÂNCIA KDS/PRINT */}
+            <button 
+                onClick={toggleKDSMode} 
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
+                title="Alternar entre envio para Tela (KDS) ou Impressão Física"
+            >
+                {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS Ativo' : 'Impressão Ativa'}
+            </button>
+
             <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
                 <span className="text-xs font-bold text-slate-600 flex items-center gap-1"><Settings size={14}/> Auto-Aceite:</span>
                 <button 
@@ -314,9 +437,7 @@ export default function Pedidos() {
         <div className="flex gap-4 h-full min-w-[1200px]">
           {Object.entries(columns).map(([key, col]) => {
             const ordersInColumn = getColumnOrders(key);
-
             if (key === 'pending' && ordersInColumn.length === 0) return null;
-
             return (
               <div key={key} className={`flex-1 flex flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
                 <div className="p-3 border-b border-black/5 font-bold flex justify-between items-center">
@@ -336,6 +457,7 @@ export default function Pedidos() {
                           if(key === 'delivery') handleStatusChange(order, 'Concluido')
                       }}
                       onPrint={() => handlePrint(order)}
+                      onReceipt={() => handlePrintReceipt(order)}
                       onView={() => setSelectedOrder(order)}
                     />
                   ))}
@@ -347,30 +469,13 @@ export default function Pedidos() {
         </div>
       </div>
       
-      {/* Modal de Detalhes */}
-      {selectedOrder && (
-        <OrderModal 
-            order={selectedOrder} 
-            onClose={() => setSelectedOrder(null)} 
-            onInitCancellation={() => {
-                setOrderToCancel(selectedOrder);
-                setSelectedOrder(null);
-            }}
-        />
-      )}
-
-      {/* Modal de Cancelamento (Com Motivos) */}
-      {orderToCancel && (
-        <CancellationModal 
-            onClose={() => setOrderToCancel(null)}
-            onConfirm={(reason) => handleStatusChange(orderToCancel, 'Cancelado', reason)}
-        />
-      )}
+      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onInitCancellation={() => { setOrderToCancel(selectedOrder); setSelectedOrder(null); }} />}
+      {orderToCancel && <CancellationModal onClose={() => setOrderToCancel(null)} onConfirm={(reason) => handleStatusChange(orderToCancel, 'Cancelado', reason)} />}
     </div>
   )
 }
 
-function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing }) {
+function OrderCard({ order, onNext, onView, onPrint, onReceipt, currentStatus, isProcessing }) {
     const isIfood = order.channel === 'IFOOD'
     const time = new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
     const displayId = order.display_id || String(order.ifood_order_id || order.id).slice(0,4);
@@ -388,11 +493,11 @@ function OrderCard({ order, onNext, onView, onPrint, currentStatus, isProcessing
                 </div>
             </div>
             <div className="text-sm font-medium text-slate-700 truncate mb-2">{order.customer_name || 'Cliente Balcão'}</div>
-            
-            {order.sale_items?.some(i => !i.product) && <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1 rounded mb-2 w-fit"><AlertTriangle size={10} /> Item s/ vínculo</div>}
+            {order.sale_items?.some(i => !i.product && !i.product_name) && <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1 rounded mb-2 w-fit"><AlertTriangle size={10} /> Item s/ vínculo</div>}
             <div className="flex justify-between items-center border-t border-slate-100 pt-2">
                 <span className="font-bold text-green-700">R$ {Number(order.total).toFixed(2)}</span>
                 <div className="flex gap-2">
+                    <button onClick={(e) => { e.stopPropagation(); onReceipt(); }} className="p-1.5 text-slate-400 hover:bg-slate-50 rounded" title="Imprimir Recibo"><Receipt size={16}/></button>
                     <button onClick={onView} className="p-1.5 text-slate-400 hover:bg-slate-50 rounded"><Receipt size={16}/></button>
                     {currentStatus !== 'completed' && currentStatus !== 'debug' && (
                         <button disabled={isProcessing} onClick={(e) => { e.stopPropagation(); onNext(); }} className="bg-slate-900 text-white p-1.5 rounded hover:bg-slate-700 transition-colors flex items-center gap-1 text-xs px-2 disabled:bg-slate-400">{isProcessing ? '...' : <ChevronRight size={14}/>}</button>
@@ -418,7 +523,7 @@ function OrderModal({ order, onClose, onInitCancellation }) {
                     <div className="space-y-3 mb-6">
                         {order.sale_items?.map((item, idx) => (
                             <div key={idx} className="flex justify-between items-center border-b border-slate-100 pb-2">
-                                <div className="flex gap-3"><span className="font-bold text-slate-900 bg-slate-100 px-2 rounded">{item.quantity}x</span><span className="text-slate-700">{item.product?.name || <span className="text-red-500 italic">Produto ERP não vinculado</span>}</span></div>
+                                <div className="flex gap-3"><span className="font-bold text-slate-900 bg-slate-100 px-2 rounded">{item.quantity}x</span><span className="text-slate-700">{item.product?.name || item.product_name || <span className="text-red-500 italic">Produto ERP não vinculado</span>}</span></div>
                                 <span className="font-medium text-slate-600">R$ {(item.unit_price * item.quantity).toFixed(2)}</span>
                             </div>
                         ))}
@@ -426,12 +531,7 @@ function OrderModal({ order, onClose, onInitCancellation }) {
                     <div className="flex justify-between items-center pt-4 border-t-2 border-slate-100"><span className="text-lg font-bold text-slate-600">Total</span><span className="text-2xl font-bold text-green-600">R$ {Number(order.total).toFixed(2)}</span></div>
                 </div>
                 <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-                    {order.channel === 'IFOOD' ? (
-                        <button onClick={onInitCancellation} className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg font-bold text-sm hover:bg-red-100 flex items-center gap-2">
-                            <Ban size={16}/> Cancelar Pedido
-                        </button>
-                    ) : <div></div>}
-                    
+                    {order.channel === 'IFOOD' ? <button onClick={onInitCancellation} className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg font-bold text-sm hover:bg-red-100 flex items-center gap-2"><Ban size={16}/> Cancelar Pedido</button> : <div></div>}
                     <button onClick={onClose} className="px-6 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800">Fechar</button>
                 </div>
             </div>
@@ -441,7 +541,6 @@ function OrderModal({ order, onClose, onInitCancellation }) {
 
 function CancellationModal({ onClose, onConfirm }) {
     const [reason, setReason] = useState(CANCELLATION_REASONS[0].code)
-    
     return (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden border border-red-200">
@@ -451,30 +550,14 @@ function CancellationModal({ onClose, onConfirm }) {
                 </div>
                 <div className="p-6">
                     <label className="block text-sm font-bold text-slate-700 mb-2">Selecione o motivo:</label>
-                    <select 
-                        value={reason} 
-                        onChange={(e) => setReason(e.target.value)}
-                        className="w-full p-2 border border-slate-300 rounded-lg bg-white mb-4 text-sm"
-                    >
-                        {CANCELLATION_REASONS.map(r => (
-                            <option key={r.code} value={r.code}>{r.code} - {r.label}</option>
-                        ))}
+                    <select value={reason} onChange={(e) => setReason(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg bg-white mb-4 text-sm">
+                        {CANCELLATION_REASONS.map(r => <option key={r.code} value={r.code}>{r.code} - {r.label}</option>)}
                     </select>
-                    <p className="text-xs text-slate-500 italic bg-slate-50 p-2 rounded">
-                        Ao confirmar, o cliente será notificado e o reembolso processado conforme as regras do iFood.
-                    </p>
+                    <p className="text-xs text-slate-500 italic bg-slate-50 p-2 rounded">Ao confirmar, o cliente será notificado e o reembolso processado.</p>
                 </div>
                 <div className="p-4 bg-slate-50 flex justify-end gap-3">
                     <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg">Voltar</button>
-                    <button 
-                        onClick={() => {
-                            const selected = CANCELLATION_REASONS.find(r => r.code === reason);
-                            onConfirm({ code: reason, description: selected.label });
-                        }} 
-                        className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700"
-                    >
-                        Confirmar Cancelamento
-                    </button>
+                    <button onClick={() => { const selected = CANCELLATION_REASONS.find(r => r.code === reason); onConfirm({ code: reason, description: selected.label }); }} className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700">Confirmar Cancelamento</button>
                 </div>
             </div>
         </div>

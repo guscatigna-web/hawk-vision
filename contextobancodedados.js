@@ -348,7 +348,8 @@
         "company_id (bigint)",
         "channel (text)",
         "ifood_order_id (text)",
-        "cashier_session_id (bigint)"
+        "cashier_session_id (bigint)",
+        "display_id (text)"
       ]
     }
   },

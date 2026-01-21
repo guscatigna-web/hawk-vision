@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Clock, CheckCircle, ChefHat, Play, Flame, AlertCircle } from 'lucide-react'
+import { Clock, CheckCircle, ChefHat, Play, Flame, AlertCircle, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 
@@ -47,6 +47,7 @@ export function Cozinha() {
             id,
             quantity,
             status,
+            product_name,
             product: products (name, unit, destination)
           )
         `)
@@ -85,21 +86,34 @@ export function Cozinha() {
     return Math.floor((now - start) / 60000)
   }
 
-  const pendingOrders = orders.map(order => {
-    const validItems = order.sale_items.filter(item => 
-      (item.status === 'pending') && 
-      (!item.product?.destination || item.product?.destination === 'cozinha')
-    )
-    return { ...order, kitchenItems: validItems }
-  }).filter(order => order.kitchenItems.length > 0) 
+  // Lógica de Filtragem: Se tiver item sem cadastro, mostra TUDO. Se não, só Cozinha.
+  const filterForKitchen = (order, targetStatus) => {
+    const hasUnmapped = order.sale_items.some(i => !i.product);
+    
+    return order.sale_items.filter(item => {
+        // 1. Filtra pelo status desejado (pending ou preparing)
+        if (item.status !== targetStatus) return false;
 
-  const preparingOrders = orders.map(order => {
-    const validItems = order.sale_items.filter(item => 
-      (item.status === 'preparing') && 
-      (!item.product?.destination || item.product?.destination === 'cozinha')
-    )
-    return { ...order, kitchenItems: validItems }
-  }).filter(order => order.kitchenItems.length > 0)
+        // 2. Se a comanda tem item sem cadastro (iFood teste), mostra TUDO na Cozinha
+        if (hasUnmapped) return true;
+
+        // 3. Caso normal: Cozinha ou Sem destino definido
+        const dest = item.product?.destination?.toLowerCase();
+        return !dest || dest === 'cozinha';
+    });
+  };
+
+  const pendingOrders = orders.map(order => ({
+    ...order, 
+    kitchenItems: filterForKitchen(order, 'pending'),
+    hasUnmapped: order.sale_items.some(i => !i.product)
+  })).filter(order => order.kitchenItems.length > 0) 
+
+  const preparingOrders = orders.map(order => ({
+    ...order, 
+    kitchenItems: filterForKitchen(order, 'preparing'),
+    hasUnmapped: order.sale_items.some(i => !i.product)
+  })).filter(order => order.kitchenItems.length > 0)
 
 
   if (loading) return <div className="flex h-screen items-center justify-center text-slate-500">Carregando KDS...</div>
@@ -127,7 +141,6 @@ export function Cozinha() {
         </div>
       </div>
 
-      {/* CORREÇÃO DE SCROLL: flex-1 min-h-0 */}
       <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-6">
         
         {/* COLUNA 1: PENDENTES */}
@@ -197,7 +210,6 @@ function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel
     const getStatusStyle = () => {
       const percentage = (mins / alertTime) * 100
       
-      // Estilo Base
       let style = { 
         borderClass: baseColor === 'blue' ? 'border-l-blue-500' : 'border-l-orange-500', 
         bgClass: 'bg-white', 
@@ -206,10 +218,8 @@ function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel
       }
 
       if (percentage >= 100) {
-        // CRÍTICO (Vermelho Piscante)
         style = { borderClass: 'border-l-red-600', bgClass: 'bg-red-50 animate-pulse', badgeClass: 'bg-red-600 text-white', textClass: 'text-red-900' }
       } else if (percentage >= 50) {
-        // ATENÇÃO (Amarelo)
         style = { borderClass: 'border-l-yellow-500', bgClass: 'bg-yellow-50', badgeClass: 'bg-yellow-500 text-white', textClass: 'text-yellow-900' }
       }
 
@@ -224,7 +234,11 @@ function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel
                 <div>
                     <h3 className={`text-xl font-bold flex items-center gap-2 ${s.textClass}`}>
                         {order.customer_name}
-                        {order.status === 'concluido' && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded uppercase">Pago</span>}
+                        {order.hasUnmapped && (
+                            <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 border border-amber-200">
+                                <AlertTriangle size={10}/> Completo
+                            </span>
+                        )}
                     </h3>
                     <p className="text-xs opacity-60">Pedido #{order.id.toString().slice(0,4)}</p>
                 </div>
@@ -237,7 +251,7 @@ function OrderCard({ order, items, getWaitTime, alertTime, onAction, actionLabel
                 {items?.map((item, idx) => (
                     <li key={idx} className={`flex gap-2 text-sm border-b border-black/5 pb-1 last:border-0 ${s.textClass}`}>
                         <span className="font-bold w-6">{item.quantity}x</span>
-                        <span className="uppercase flex-1">{item.product?.name}</span>
+                        <span className="uppercase flex-1">{item.product?.name || item.product_name}</span>
                     </li>
                 ))}
             </ul>

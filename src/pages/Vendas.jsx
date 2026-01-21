@@ -12,6 +12,7 @@ import { PaymentModal } from '../components/PaymentModal'
 import { DiscountModal } from '../components/DiscountModal'
 import { AuthModal } from '../components/AuthModal' 
 import { FiscalService } from '../services/FiscalService' 
+import { PrinterService } from '../services/printer'
 import toast from 'react-hot-toast'
 
 export function Vendas() {
@@ -33,7 +34,19 @@ export function Vendas() {
     return saved === null ? true : saved === 'true'
   })
 
-  // Leitura da configuração de confirmação
+  // Listener para sincronizar mudança de KDS em outras abas
+  useEffect(() => {
+    const handleStorageChange = () => {
+        setUseKDS(localStorage.getItem('hawk_use_kds') === 'true')
+    }
+    window.addEventListener('storage', handleStorageChange)
+    window.addEventListener('hawk_kds_change', handleStorageChange)
+    return () => {
+        window.removeEventListener('storage', handleStorageChange)
+        window.removeEventListener('hawk_kds_change', handleStorageChange)
+    }
+  }, [])
+
   const [askRelease] = useState(() => {
     const saved = localStorage.getItem('hawk_ask_table_release')
     return saved === null ? true : saved === 'true'
@@ -43,6 +56,7 @@ export function Vendas() {
     const newValue = !useKDS
     setUseKDS(newValue)
     localStorage.setItem('hawk_use_kds', newValue)
+    window.dispatchEvent(new Event('hawk_kds_change'))
     toast(newValue ? "Modo KDS Ativado" : "Modo Impressora Ativado")
   }
 
@@ -56,24 +70,20 @@ export function Vendas() {
   // --- CONTROLE DE IMPRESSÃO E MODAL ---
   const [printData, setPrintData] = useState(null) 
   const [printType, setPrintType] = useState(null) 
+  const [printTrigger, setPrintTrigger] = useState(0) 
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [lastSaleData, setLastSaleData] = useState(null) 
   const [companyInfo, setCompanyInfo] = useState(null)
   
-  // --- ESTADO PARA MULTI-TENANT (CORREÇÃO DO ERRO 403) ---
   const [companyId, setCompanyId] = useState(null)
-
-  // --- CONTROLE DE AUTORIZAÇÃO ---
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [pendingAction, setPendingAction] = useState(null) 
 
-  // Estados de Dados
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [discountsList, setDiscountsList] = useState([]) 
   const [loading, setLoading] = useState(true)
   
-  // Carrinho e Venda
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [cart, setCart] = useState([]) 
@@ -81,12 +91,10 @@ export function Vendas() {
   const [existingTotal, setExistingTotal] = useState(0)
   const [currentSaleId, setCurrentSaleId] = useState(saleIdParam || null)
 
-  // Dados do Cliente e Pagamento
   const [customerName, setCustomerName] = useState('')
   const [customerDoc, setCustomerDoc] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
 
-  // --- ESTADOS DE PAGAMENTO AVANÇADO ---
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false)
   
@@ -94,11 +102,15 @@ export function Vendas() {
   const [discount, setDiscount] = useState({ type: 'fixed', value: 0, reason: '' }) 
   const [includeServiceFee, setIncludeServiceFee] = useState(true)
 
-  // Busca inicial
+  useEffect(() => {
+    if (printData && printTrigger > 0) {
+        setTimeout(() => window.print(), 300);
+    }
+  }, [printTrigger, printData]);
+
   useEffect(() => {
     async function fetchData() {
       try {
-        // 1. Busca Company ID de forma ROBUSTA (Igual ao Dashboard)
         const { data: { user: currentUser } } = await supabase.auth.getUser();
         if (currentUser) {
             const { data: emp } = await supabase
@@ -107,7 +119,6 @@ export function Vendas() {
                 .eq('auth_user_id', currentUser.id)
                 .maybeSingle();
             
-            // Tenta pegar do employee, se não, tenta metadata (fallback)
             const id = emp?.company_id || currentUser.user_metadata?.company_id;
             if (id) setCompanyId(id);
         }
@@ -127,10 +138,7 @@ export function Vendas() {
   }, [user])
 
   const fetchPayments = useCallback(async (saleId) => {
-    if (!saleId) {
-        setPayments([])
-        return
-    }
+    if (!saleId) { setPayments([]); return; }
     const { data } = await supabase.from('sale_payments').select('*').eq('sale_id', saleId)
     setPayments(data || [])
   }, [])
@@ -138,12 +146,8 @@ export function Vendas() {
   const fetchExistingSaleItems = useCallback(async (saleId) => {
     const { data } = await supabase.from('sale_items').select('*, product:products(*)').eq('sale_id', saleId)
     setExistingItems(data || [])
-    
-    // Calcula o total dos itens salvos
     const total = data?.reduce((acc, item) => acc + (item.quantity * item.unit_price), 0) || 0
     setExistingTotal(total)
-    
-    // Se a venda existe, busca os pagamentos também
     if (saleId) fetchPayments(saleId)
   }, [fetchPayments])
 
@@ -152,25 +156,18 @@ export function Vendas() {
     if (isRestaurantMode) setCustomerName(`Mesa ${tableNumberParam}`)
   }, [saleIdParam, isRestaurantMode, tableNumberParam, fetchExistingSaleItems])
 
-
-  // --- CÁLCULOS TOTAIS ---
   const cartTotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0)
   const subtotalRaw = existingTotal + cartTotal
   
   const serviceFeeRate = (companyInfo?.service_fee || 10) / 100
   const serviceFeeValue = (isRestaurantMode && includeServiceFee) ? subtotalRaw * serviceFeeRate : 0
-  
-  const discountValue = discount.type === 'percentage' 
-    ? (subtotalRaw * (discount.value / 100)) 
-    : discount.value
-
+  const discountValue = discount.type === 'percentage' ? (subtotalRaw * (discount.value / 100)) : discount.value
   const grandTotalFinal = Math.max(0, subtotalRaw + serviceFeeValue - discountValue)
   
   const totalPaid = payments.reduce((acc, p) => acc + Number(p.amount), 0)
   const remainingDue = Math.max(0, grandTotalFinal - totalPaid)
   const changeDue = Math.max(0, totalPaid - grandTotalFinal)
 
-  // --- AÇÕES DO CARRINHO ---
   const addToCart = (product) => {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id)
@@ -183,14 +180,12 @@ export function Vendas() {
     setCart(prev => prev.map(item => item.product.id === pid ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item))
   }
 
-  // --- LÓGICA DE REMOÇÃO SEGURA ---
   const handleRemoveClick = (item, isExisting) => {
     if (!isRestaurantMode) {
       setPendingAction({ type: 'delete_cart', data: item })
       setAuthModalOpen(true)
       return
     }
-
     if (isRestaurantMode) {
       if (isExisting) {
         setPendingAction({ type: 'delete_server', data: item })
@@ -203,46 +198,91 @@ export function Vendas() {
 
   const executePendingAction = async (approver) => {
     if (!pendingAction) return
-
     if (pendingAction.type === 'delete_cart') {
       setCart(prev => prev.filter(item => item.product.id !== pendingAction.data.product.id))
       toast.success(`Item removido (Aut: ${approver.name.split(' ')[0]})`)
     }
-
     if (pendingAction.type === 'delete_server') {
       try {
         await supabase.from('sale_items').delete().eq('id', pendingAction.data.id)
         await fetchExistingSaleItems(currentSaleId) 
         toast.success(`Cancelado (Aut: ${approver.name.split(' ')[0]})`)
-      } catch (error) {
-        console.error(error)
-        toast.error("Erro ao cancelar item")
-      }
+      } catch (error) { console.error(error); toast.error("Erro ao cancelar item") }
     }
-
     setPendingAction(null)
   }
 
   // --- FUNÇÕES DE IMPRESSÃO ---
-  const handlePrint = (type, data) => {
-    setPrintType(type)
-    setPrintData(data)
-    setTimeout(() => window.print(), 300)
+  const handlePrint = async (type, data) => {
+    if (type === 'kitchen') {
+        const kitchenItems = [];
+        const barItems = [];
+        const itemsToPrint = data.items || [];
+        
+        itemsToPrint.forEach(item => {
+            const dest = item.product?.destination?.toLowerCase() || '';
+            const name = item.product?.name?.toLowerCase() || '';
+            
+            if (dest === 'bar' || dest === 'copa') {
+                barItems.push(item);
+            } else if (dest === 'cozinha') {
+                kitchenItems.push(item);
+            } else {
+                // Fallback por palavra-chave
+                if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink') || name.includes('lata')) {
+                    barItems.push(item);
+                } else {
+                    kitchenItems.push(item);
+                }
+            }
+        });
+
+        try {
+            if (kitchenItems.length > 0) await PrinterService.printSectorTicket(data, kitchenItems, "COZINHA");
+            if (barItems.length > 0) await PrinterService.printSectorTicket(data, barItems, "BAR / COPA");
+            toast.success("Enviado para produção!");
+        } catch (error) {
+            console.error("Erro QZ Kitchen:", error);
+            toast.error("QZ Offline. Usando Janela.");
+            // Fallback
+            setPrintType('kitchen');
+            setPrintData(data);
+            setPrintTrigger(prev => prev + 1);
+        }
+    } 
+    else if (type === 'prebill' || type === 'customer') {
+        try {
+            await PrinterService.printCustomerReceipt(data, companyInfo);
+            toast.success("Recibo impresso!");
+        } catch (error) {
+            console.error("Erro QZ Receipt:", error);
+            toast.error("QZ Offline. Usando Janela.");
+            // Fallback
+            setPrintType(type);
+            setPrintData(data);
+            setPrintTrigger(prev => prev + 1);
+        }
+    }
   }
 
   const handlePrintPreBill = () => {
     const allItems = [...existingItems, ...cart] 
     if (allItems.length === 0) return toast.error("Nada para imprimir.")
     const data = {
+      display_id: currentSaleId ? String(currentSaleId).slice(0,4) : 'NOVO',
+      id: currentSaleId,
+      created_at: new Date(),
       customer_name: customerName || 'Mesa/Cliente',
       items: allItems,
+      sale_items: allItems,
+      total: subtotalRaw + serviceFeeValue - discountValue,
       waiter_name: user?.name || 'Garçom',
       table_number: tableNumberParam
     }
     handlePrint('prebill', data)
   }
 
-  // --- KDS (CORRIGIDO COM COMPANY_ID) ---
+  // --- KDS & ENVIO ---
   const handleSendOrder = async () => {
     if (cart.length === 0) return toast.error("Carrinho vazio!")
     if (!currentSession) return toast.error("Abra o caixa antes de lançar!") 
@@ -267,6 +307,7 @@ export function Vendas() {
         setCurrentSaleId(newSale.id)
       }
 
+      // Se usa KDS -> pending. Se impressora -> delivered (ignora tela)
       const initialStatus = useKDS ? 'pending' : 'delivered' 
       const itemsToInsert = cart.map(item => ({
         company_id: companyId,
@@ -286,12 +327,14 @@ export function Vendas() {
       
       if (useKDS) toast.success("Enviado para KDS!")
       else {
-          toast.success("Imprimindo Produção...")
           const printPayload = {
             id: activeId,
+            display_id: String(activeId).slice(0,4),
             customer_name: customerName || 'Balcão',
             created_at: new Date(),
-            items: cart 
+            table_number: tableNumberParam,
+            items: cart, 
+            waiter_name: user?.name
           }
           handlePrint('kitchen', printPayload)
       }
@@ -309,10 +352,9 @@ export function Vendas() {
     try {
         let activeId = currentSaleId
 
-        // Se não houver venda criada, cria agora (Varejo)
         if (!activeId) {
             const { data: newSale, error } = await supabase.from('sales').insert({
-                company_id: companyId, // Correção do erro de DB
+                company_id: companyId, 
                 employee_id: user.id, 
                 customer_name: customerName || 'Varejo', 
                 status: 'aberto', 
@@ -434,12 +476,14 @@ export function Vendas() {
 
       setLastSaleData({
         id: currentSaleId,
+        display_id: String(currentSaleId).slice(0,4),
         total: grandTotalFinal,
         change: changeDue,
         payment_method: payments.length === 1 ? payments[0].payment_method : 'Múltiplo',
         created_at: new Date(),
         items: existingItems,
         customer_doc: customerDoc,
+        customer_name: customerName,
         fiscal_status: fiscalData.status,
         fiscal_pdf: fiscalData.pdf
       })
