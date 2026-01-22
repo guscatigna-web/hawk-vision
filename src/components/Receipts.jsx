@@ -57,9 +57,28 @@ export function KitchenTicket({ order, station = 'Cozinha' }) {
   )
 }
 
-// --- 2. PRÉ-CONTA (Conferência Completa) ---
+// --- 2. PRÉ-CONTA (Conferência Completa - Atualizado) ---
 export function PreBillTicket({ order, subtotal, serviceFee, total, company }) {
   if (!order) return null
+
+  // Lógica de Agrupamento para Visualização
+  const groupedItems = [];
+  (order.items || []).forEach(item => {
+      const id = item.product?.id || item.product_id;
+      const name = item.product?.name || item.name;
+      const price = Number(item.unit_price || item.product?.price || 0);
+      const qty = Number(item.quantity);
+
+      const existing = groupedItems.find(g => g.id === id && Math.abs(g.price - price) < 0.01);
+      if (existing) {
+          existing.quantity += qty;
+      } else {
+          groupedItems.push({ id, name, price, quantity: qty });
+      }
+  });
+
+  const people = order.people_count && order.people_count > 0 ? order.people_count : 1;
+  const perPerson = total / people;
 
   return (
     <div className="printable-ticket-area">
@@ -104,13 +123,13 @@ export function PreBillTicket({ order, subtotal, serviceFee, total, company }) {
         <span style={{width: '30%', textAlign: 'right'}}>TOTAL</span>
       </div>
 
-      {/* LISTA DE ITENS */}
-      {(order.items || []).map((item, index) => (
+      {/* LISTA DE ITENS (AGRUPADA) */}
+      {groupedItems.map((item, index) => (
         <div key={index} className="ticket-row text-[10px] mb-1">
           <span style={{width: '10%'}}>{item.quantity}</span>
-          <span style={{width: '60%'}} className="truncate">{item.product?.name || item.name}</span>
+          <span style={{width: '60%'}} className="truncate">{item.name}</span>
           <span style={{width: '30%', textAlign: 'right'}}>
-            {((item.unit_price || item.product?.price || 0) * item.quantity).toFixed(2)}
+            {(item.price * item.quantity).toFixed(2)}
           </span>
         </div>
       ))}
@@ -137,8 +156,23 @@ export function PreBillTicket({ order, subtotal, serviceFee, total, company }) {
         <span>R$ {total.toFixed(2)}</span>
       </div>
 
-      <div className="ticket-center text-[10px] mt-6 font-bold">
-        *** NÃO É DOCUMENTO FISCAL ***
+      {/* DIVISÃO DE PESSOAS */}
+      {people > 1 && (
+        <div className="text-[10px] mt-2 pt-1 border-t border-dashed border-gray-400">
+           <div className="ticket-row">
+              <span>PESSOAS:</span>
+              <span>{people}</span>
+           </div>
+           <div className="ticket-row font-bold">
+              <span>VALOR POR PESSOA:</span>
+              <span>R$ {perPerson.toFixed(2)}</span>
+           </div>
+        </div>
+      )}
+
+      <div className="ticket-center text-[10px] mt-6">
+        <p className="font-bold">*** NÃO É DOCUMENTO FISCAL ***</p>
+        <p className="mt-4 font-bold">HAWK VISION</p>
       </div>
     </div>
   )
@@ -191,7 +225,8 @@ export function CustomerReceipt({ order, company }) {
       )}
 
       <div className="ticket-center text-[10px] mt-6">
-        Obrigado pela preferência!
+        <p>Obrigado pela preferência!</p>
+        <p className="mt-2 font-bold">HAWK VISION</p>
       </div>
     </div>
   )

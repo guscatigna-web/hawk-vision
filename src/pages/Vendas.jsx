@@ -272,20 +272,33 @@ export function Vendas() {
     }
   }
 
+  // --- PRÉ-CONTA ATUALIZADA (Layout ERP) ---
   const handlePrintPreBill = () => {
     const allItems = [...existingItems, ...cart] 
     if (allItems.length === 0) return toast.error("Nada para imprimir.")
+    
+    // Objeto rico para o printer.js
     const data = {
       display_id: currentSaleId ? String(currentSaleId).slice(0,4) : 'NOVO',
-      id: currentSaleId,
+      id: currentSaleId || 'Temp',
       created_at: new Date(),
       customer_name: customerName || 'Mesa/Cliente',
-      items: allItems,
-      sale_items: allItems,
-      total: subtotalRaw + serviceFeeValue - discountValue,
+      table_number: tableNumberParam,
       waiter_name: user?.name || 'Garçom',
-      table_number: tableNumberParam
+      people_count: currentSale?.people_count || 1, // Envia número de pessoas
+      
+      // Lista de Itens (Sem sujeira)
+      items: allItems, 
+      sale_items: allItems, // Compatibilidade
+
+      // Totais Discriminados (Para o layout ERP)
+      subtotal_value: subtotalRaw,
+      service_fee_value: serviceFeeValue,
+      discount_value: discountValue,
+      total_value: grandTotalFinal
     }
+    
+    // Se for 'prebill', chamamos a função nova
     handlePrint('prebill', data)
   }
 
