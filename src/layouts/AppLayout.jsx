@@ -1,6 +1,22 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Package, Users, Beer, ShoppingCart, Settings, ChefHat, LogOut, ClipboardCheck, Bell, KanbanSquare, Crown, LayoutGrid, UtensilsCrossed } from 'lucide-react'
+import { 
+  LayoutDashboard, 
+  Package, 
+  Users, 
+  Beer, 
+  ShoppingCart, 
+  Settings, 
+  ChefHat, 
+  LogOut, 
+  ClipboardCheck, 
+  Bell, 
+  KanbanSquare, 
+  Crown, 
+  LayoutGrid, 
+  UtensilsCrossed,
+  BarChart3 // Novo ícone para Relatórios
+} from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
@@ -58,10 +74,13 @@ export function AppLayout() {
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 pl-2">Gestão</p>
                   <NavItem to="/" icon={<LayoutDashboard size={20}/>} label="Dashboard" />
+                  
+                  {/* NOVO ITEM: RELATÓRIOS */}
+                  <NavItem to="/relatorios" icon={<BarChart3 size={20}/>} label="Relatórios & Logs" />
+
                   <NavItem to="/vendas" icon={<ShoppingCart size={20}/>} label="Vendas / PDV" />
                   <NavItem to="/pedidos" icon={<ClipboardCheck size={20}/>} label="Pedidos" />
                   
-                  {/* Caminhos Corrigidos */}
                   <NavItem to="/mesas" icon={<LayoutGrid size={20}/>} label="Gestão de Mesas" />
                   <NavItem to="/cozinha" icon={<ChefHat size={20}/>} label="KDS Cozinha" />
                   <NavItem to="/bar" icon={<Beer size={20}/>} label="KDS Bar" />
@@ -70,16 +89,10 @@ export function AppLayout() {
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 pl-2">Cadastros</p>
                   
-                  {/* Renomeado para Inventário e apontando para /inventario */}
                   <NavItem to="/inventario" icon={<Package size={20}/>} label="Inventário" />
-                  
-                  {/* Apontando para /estoque (Mantido caso seja diferente de inventário) */}
                   <NavItem to="/estoque" icon={<UtensilsCrossed size={20}/>} label="Estoque (Insumos)" />
-                  
-                  {/* Renomeado para Equipe e apontando para /equipe */}
                   <NavItem to="/equipe" icon={<Users size={20}/>} label="Equipe" />
                   
-                  {/* Apontando para /notificacoes */}
                   <NavItem to="/notificacoes" icon={<Bell size={20}/>} label={`Notificações ${pendingCount > 0 ? `(${pendingCount})` : ''}`} highlight={pendingCount > 0} />
                 </div>
 

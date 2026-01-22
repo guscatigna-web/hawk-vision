@@ -1,12 +1,33 @@
 import { useState, useEffect } from 'react'
-import { ArrowUpCircle, ArrowDownCircle, Loader2, ArrowLeft, ClipboardList, ArrowRightLeft, Scale, Filter, X, Printer, FileSpreadsheet, History, CheckCircle, AlertTriangle, FileText, Trash2, XCircle } from 'lucide-react'
+import { 
+  ArrowUpCircle, 
+  ArrowDownCircle, 
+  Loader2, 
+  ArrowLeft, 
+  ClipboardList, 
+  ArrowRightLeft, 
+  Scale, 
+  Filter, 
+  X, 
+  Printer, 
+  FileSpreadsheet, 
+  History, 
+  CheckCircle, 
+  AlertTriangle, 
+  FileText, 
+  Trash2, 
+  XCircle,
+  ShieldAlert,
+  Search,
+  Eye
+} from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
 import { toUTCStart, toUTCEnd, formatDateTime } from '../utils/dateUtils'
 import { exportToCSV } from '../utils/excelUtils'
 import { PrintPortal } from '../components/Receipts' 
 import { FiscalService } from '../services/FiscalService'
-import { AuthModal } from '../components/AuthModal' // NOVO IMPORT
+import { AuthModal } from '../components/AuthModal'
 
 export function Relatorios() {
   const [currentView, setCurrentView] = useState('menu') 
@@ -25,9 +46,13 @@ export function Relatorios() {
         <InventoryAuditReport onBack={() => setCurrentView('menu')} />
       )}
 
-      {/* NOVA TELA */}
       {currentView === 'historico_vendas' && (
         <SalesHistoryReport onBack={() => setCurrentView('menu')} />
+      )}
+
+      {/* NOVA TELA DE LOGS */}
+      {currentView === 'auditoria_logs' && (
+        <AuditLogsReport onBack={() => setCurrentView('menu')} />
       )}
     </div>
   )
@@ -39,53 +64,306 @@ function ReportsMenu({ onSelect }) {
       <h2 className="text-2xl font-bold text-slate-800 mb-2">Central de Relatórios</h2>
       <p className="text-sm text-slate-500 mb-8">Selecione o tipo de relatório que deseja visualizar.</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         
-        {/* NOVO CARD: HISTÓRICO DE VENDAS */}
         <button 
           onClick={() => onSelect('historico_vendas')}
-          className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-violet-300 transition-all text-left group"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-violet-300 transition-all text-left group h-full flex flex-col"
         >
-          <div className="bg-violet-50 w-14 h-14 rounded-lg flex items-center justify-center text-violet-600 mb-4 group-hover:scale-110 transition-transform">
-            <History size={28} />
+          <div className="bg-violet-50 w-12 h-12 rounded-lg flex items-center justify-center text-violet-600 mb-4 group-hover:scale-110 transition-transform">
+            <History size={24} />
           </div>
           <h3 className="text-lg font-bold text-slate-800 mb-2">Histórico de Vendas</h3>
-          <p className="text-slate-500 text-sm">
+          <p className="text-slate-500 text-sm flex-1">
             Visualize todas as vendas, status fiscal e reemita notas (NFC-e).
           </p>
         </button>
 
         <button 
           onClick={() => onSelect('movimentacoes')}
-          className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-300 transition-all text-left group"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-300 transition-all text-left group h-full flex flex-col"
         >
-          <div className="bg-blue-50 w-14 h-14 rounded-lg flex items-center justify-center text-blue-600 mb-4 group-hover:scale-110 transition-transform">
-            <ArrowRightLeft size={28} />
+          <div className="bg-blue-50 w-12 h-12 rounded-lg flex items-center justify-center text-blue-600 mb-4 group-hover:scale-110 transition-transform">
+            <ArrowRightLeft size={24} />
           </div>
           <h3 className="text-lg font-bold text-slate-800 mb-2">Extrato de Movimentações</h3>
-          <p className="text-slate-500 text-sm">
+          <p className="text-slate-500 text-sm flex-1">
             Histórico completo de entradas e saídas de estoque. Filtre por data, tipo e motivo.
           </p>
         </button>
 
         <button 
           onClick={() => onSelect('inventario')}
-          className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-amber-300 transition-all text-left group"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-amber-300 transition-all text-left group h-full flex flex-col"
         >
-          <div className="bg-amber-50 w-14 h-14 rounded-lg flex items-center justify-center text-amber-600 mb-4 group-hover:scale-110 transition-transform">
-            <ClipboardList size={28} />
+          <div className="bg-amber-50 w-12 h-12 rounded-lg flex items-center justify-center text-amber-600 mb-4 group-hover:scale-110 transition-transform">
+            <ClipboardList size={24} />
           </div>
           <h3 className="text-lg font-bold text-slate-800 mb-2">Auditoria de Inventário</h3>
-          <p className="text-slate-500 text-sm">
+          <p className="text-slate-500 text-sm flex-1">
             Histórico das contagens físicas (Balanços). Veja quem contou e as divergências.
           </p>
         </button>
+
+        {/* NOVO CARD LGPD */}
+        <button 
+          onClick={() => onSelect('auditoria_logs')}
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-slate-400 transition-all text-left group h-full flex flex-col"
+        >
+          <div className="bg-slate-100 w-12 h-12 rounded-lg flex items-center justify-center text-slate-600 mb-4 group-hover:scale-110 transition-transform">
+            <ShieldAlert size={24} />
+          </div>
+          <h3 className="text-lg font-bold text-slate-800 mb-2">Logs de Segurança</h3>
+          <p className="text-slate-500 text-sm flex-1">
+            Rastreabilidade LGPD. Veja quem alterou preços, cadastros e configurações críticas.
+          </p>
+        </button>
+
       </div>
     </div>
   )
 }
 
-// --- NOVO COMPONENTE: HISTÓRICO DE VENDAS ---
+// --- NOVO COMPONENTE: LOGS DE AUDITORIA (LGPD) ---
+function AuditLogsReport({ onBack }) {
+    const [logs, setLogs] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [employees, setEmployees] = useState({}) // Mapa de UUID -> Nome
+    
+    // Filtros
+    const [filters, setFilters] = useState({
+        startDate: '',
+        endDate: '',
+        table: '',
+        operation: ''
+    })
+
+    // Modal de Detalhes
+    const [selectedLog, setSelectedLog] = useState(null)
+
+    useEffect(() => {
+        fetchLogs()
+    }, [filters])
+
+    async function fetchLogs() {
+        setLoading(true)
+        try {
+            let query = supabase
+                .from('audit_logs')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(100)
+
+            if (filters.table) query = query.eq('table_name', filters.table)
+            if (filters.operation) query = query.eq('operation', filters.operation)
+            if (filters.startDate) query = query.gte('created_at', toUTCStart(filters.startDate))
+            if (filters.endDate) query = query.lte('created_at', toUTCEnd(filters.endDate))
+
+            const { data, error } = await query
+            if (error) throw error
+
+            setLogs(data || [])
+            
+            // Busca nomes dos usuários envolvidos
+            if (data && data.length > 0) {
+                const userIds = [...new Set(data.map(l => l.changed_by).filter(Boolean))]
+                if (userIds.length > 0) {
+                    const { data: users } = await supabase.from('employees').select('auth_user_id, name').in('auth_user_id', userIds)
+                    const userMap = {}
+                    users?.forEach(u => userMap[u.auth_user_id] = u.name)
+                    setEmployees(userMap)
+                }
+            }
+
+        } catch (error) {
+            console.error(error)
+            toast.error('Erro ao buscar logs')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const getDiff = (oldD, newD) => {
+        if (!oldD && newD) return { type: 'create', data: newD }
+        if (oldD && !newD) return { type: 'delete', data: oldD }
+        
+        // Compare changes
+        const changes = {}
+        const allKeys = [...new Set([...Object.keys(oldD || {}), ...Object.keys(newD || {})])]
+        
+        allKeys.forEach(key => {
+            if (JSON.stringify(oldD[key]) !== JSON.stringify(newD[key])) {
+                changes[key] = { from: oldD[key], to: newD[key] }
+            }
+        })
+        return { type: 'update', changes }
+    }
+
+    return (
+        <div className="animate-fade-in space-y-6">
+            <div className="flex items-center gap-4">
+                <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                    <ArrowLeft size={20} />
+                </button>
+                <div>
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                         <ShieldAlert className="text-slate-600"/> Logs de Auditoria
+                    </h2>
+                    <p className="text-sm text-slate-500">Rastreabilidade de alterações em dados sensíveis (LGPD).</p>
+                </div>
+            </div>
+
+            {/* Filtros */}
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-wrap gap-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Tabela</label>
+                    <select 
+                        className="p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        value={filters.table}
+                        onChange={e => setFilters({...filters, table: e.target.value})}
+                    >
+                        <option value="">Todas</option>
+                        <option value="products">Produtos</option>
+                        <option value="employees">Funcionários</option>
+                        <option value="sales">Vendas</option>
+                        <option value="company_settings">Dados Empresa</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Operação</label>
+                    <select 
+                        className="p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        value={filters.operation}
+                        onChange={e => setFilters({...filters, operation: e.target.value})}
+                    >
+                        <option value="">Todas</option>
+                        <option value="INSERT">Criação (INSERT)</option>
+                        <option value="UPDATE">Alteração (UPDATE)</option>
+                        <option value="DELETE">Exclusão (DELETE)</option>
+                    </select>
+                </div>
+                <button onClick={fetchLogs} className="self-end px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-900 transition-colors">
+                    <Search size={16} className="inline mr-2"/> Filtrar
+                </button>
+            </div>
+
+            {/* Tabela */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                <table className="w-full text-left">
+                    <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold">
+                        <tr>
+                            <th className="p-4">Data/Hora</th>
+                            <th className="p-4">Usuário</th>
+                            <th className="p-4">Tabela</th>
+                            <th className="p-4 text-center">Ação</th>
+                            <th className="p-4 text-right">Detalhes</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {loading ? (
+                            <tr><td colSpan="5" className="p-8 text-center"><Loader2 className="animate-spin inline text-slate-400"/></td></tr>
+                        ) : logs.length === 0 ? (
+                            <tr><td colSpan="5" className="p-8 text-center text-slate-400">Nenhum registro encontrado.</td></tr>
+                        ) : (
+                            logs.map(log => (
+                                <tr key={log.id} className="hover:bg-slate-50">
+                                    <td className="p-4 text-sm text-slate-600 font-mono">{formatDateTime(log.created_at)}</td>
+                                    <td className="p-4 text-sm font-medium text-slate-700">
+                                        {employees[log.changed_by] || 'Sistema / Desconhecido'}
+                                    </td>
+                                    <td className="p-4 text-sm text-slate-600">
+                                        <span className="px-2 py-1 bg-slate-100 rounded border border-slate-200 font-mono text-xs">{log.table_name}</span>
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${
+                                            log.operation === 'INSERT' ? 'bg-green-100 text-green-700' :
+                                            log.operation === 'DELETE' ? 'bg-red-100 text-red-700' :
+                                            'bg-blue-100 text-blue-700'
+                                        }`}>
+                                            {log.operation}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <button onClick={() => setSelectedLog(log)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                                            <Eye size={18}/>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Modal de Detalhes (Visualizador de Diff) */}
+            {selectedLog && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden animate-scale-in">
+                        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-bold text-slate-800">Detalhes da Alteração</h3>
+                            <button onClick={() => setSelectedLog(null)} className="p-1 hover:bg-slate-200 rounded-full"><X size={20}/></button>
+                        </div>
+                        <div className="p-6 overflow-y-auto custom-scrollbar">
+                            <div className="mb-4 text-sm text-slate-500">
+                                <p><strong>ID do Registro:</strong> {selectedLog.record_id}</p>
+                                <p><strong>Tabela:</strong> {selectedLog.table_name}</p>
+                            </div>
+                            
+                            <div className="bg-slate-900 rounded-lg p-4 font-mono text-xs overflow-x-auto">
+                                {(() => {
+                                    const diff = getDiff(selectedLog.old_data, selectedLog.new_data)
+                                    
+                                    if (diff.type === 'create') {
+                                        return (
+                                            <div>
+                                                <div className="text-green-400 font-bold mb-2">// NOVO REGISTRO</div>
+                                                {Object.entries(diff.data).map(([k, v]) => (
+                                                    <div key={k} className="text-slate-300">
+                                                        <span className="text-purple-400">{k}:</span> {JSON.stringify(v)}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )
+                                    }
+                                    if (diff.type === 'delete') {
+                                        return (
+                                            <div>
+                                                <div className="text-red-400 font-bold mb-2">// REGISTRO EXCLUÍDO</div>
+                                                {Object.entries(diff.data).map(([k, v]) => (
+                                                    <div key={k} className="text-slate-500 line-through">
+                                                        <span className="text-purple-400">{k}:</span> {JSON.stringify(v)}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )
+                                    }
+                                    // Update
+                                    return (
+                                        <div>
+                                            <div className="text-blue-400 font-bold mb-2">// CAMPOS ALTERADOS</div>
+                                            {Object.entries(diff.changes).map(([k, val]) => (
+                                                <div key={k} className="mb-1 border-b border-slate-700 pb-1">
+                                                    <span className="text-purple-400 font-bold">{k}</span>
+                                                    <div className="flex gap-2 items-center mt-1">
+                                                        <span className="text-red-400 bg-red-900/20 px-1 rounded line-through opacity-70">{JSON.stringify(val.from)}</span>
+                                                        <span className="text-slate-500">➜</span>
+                                                        <span className="text-green-400 bg-green-900/20 px-1 rounded font-bold">{JSON.stringify(val.to)}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {Object.keys(diff.changes).length === 0 && <span className="text-slate-500">Nenhuma alteração detectada nos dados (apenas metadados).</span>}
+                                        </div>
+                                    )
+                                })()}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 function SalesHistoryReport({ onBack }) {
   const [sales, setSales] = useState([])
   const [loading, setLoading] = useState(true)
