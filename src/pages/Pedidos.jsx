@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings, XCircle, AlertCircle, Monitor } from 'lucide-react'
+import { Clock, Bike, Ban, MapPin, Receipt, ChevronRight, Volume2, AlertTriangle, Printer, ToggleLeft, ToggleRight, Settings, XCircle, AlertCircle, Monitor, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { KitchenTicket } from '../components/KitchenTicket'
@@ -27,6 +27,9 @@ export default function Pedidos() {
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [cashierStatus, setCashierStatus] = useState('checking')
   const [errorMsg, setErrorMsg] = useState(null)
+  
+  // Estado para indicar se o polling está rodando
+  const [isPolling, setIsPolling] = useState(false)
   
   const [autoAcceptInfo, setAutoAcceptInfo] = useState({ enabled: false, loading: true })
   
@@ -60,7 +63,6 @@ export default function Pedidos() {
         setUseKDS(localStorage.getItem('hawk_use_kds') === 'true')
     }
     window.addEventListener('storage', handleStorageChange)
-    // Listener customizado para a mesma aba (se necessário)
     window.addEventListener('hawk_kds_change', handleStorageChange)
     return () => {
         window.removeEventListener('storage', handleStorageChange)
@@ -68,7 +70,6 @@ export default function Pedidos() {
     }
   }, [])
 
-  // Função para alternar modo
   const toggleKDSMode = () => {
     const newValue = !useKDS
     setUseKDS(newValue)
@@ -90,7 +91,6 @@ export default function Pedidos() {
     return isUUID ? 'auth_user_id' : 'id';
   }, []);
 
-  // Busca dados da empresa para o cabeçalho da nota
   const fetchCompanyInfo = useCallback(async (companyId) => {
       try {
           const { data } = await supabase.from('company_settings').select('*').eq('company_id', companyId).maybeSingle();
@@ -172,7 +172,44 @@ export default function Pedidos() {
     } catch (error) { console.error(error); } finally { setLoading(false); }
   }, [user, fetchIfoodSettings, fetchCompanyInfo, getSearchColumn]); 
 
-  // --- NOVA LÓGICA DE PRODUÇÃO (KDS vs IMPRESSORA) ---
+  // --- LOOP DE POLLING (ESSENCIAL PARA RECEBER PEDIDOS) ---
+  useEffect(() => {
+    let intervalId;
+
+    const runPolling = async () => {
+        if (!user) return;
+        
+        try {
+            const searchCol = getSearchColumn(user.id);
+            const { data: emp } = await supabase.from('employees').select('company_id').eq(searchCol, user.id).maybeSingle();
+            const companyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
+
+            if (companyId) {
+                setIsPolling(true);
+                // Chama a Edge Function para buscar pedidos no iFood e salvar no banco
+                await supabase.functions.invoke('ifood-proxy', {
+                    body: { action: 'polling', companyId: companyId }
+                });
+                // Atualiza a tela localmente
+                await fetchOrders();
+            }
+        } catch (error) {
+            console.error("Erro no ciclo de polling:", error);
+        } finally {
+            setIsPolling(false);
+        }
+    };
+
+    // Roda imediatamente ao carregar
+    runPolling();
+
+    // Repete a cada 45 segundos
+    intervalId = setInterval(runPolling, 45000);
+
+    return () => clearInterval(intervalId);
+  }, [user, getSearchColumn, fetchOrders]);
+
+
   const handlePrint = useCallback(async (order) => {
     const toastId = toast.loading(useKDS ? "Enviando para KDS..." : "Imprimindo Produção...");
     
@@ -180,7 +217,6 @@ export default function Pedidos() {
     const hasUnmappedItems = order.sale_items.some(i => !i.product);
     const allItems = order.sale_items;
 
-    // 1. SEMPRE Imprime a Via de Expedição (Caixa/Motoboy) se for iFood
     if (isIfood) {
         try {
             await PrinterService.printExpeditionTicket(order);
@@ -189,10 +225,8 @@ export default function Pedidos() {
         }
     }
 
-    // --- MODO KDS ---
     if (useKDS) {
         try {
-            // Atualiza status dos itens para 'pending' para aparecerem nas telas
             const itemIds = order.sale_items.map(i => i.id);
             if (itemIds.length > 0) {
                 await supabase.from('sale_items').update({ status: 'pending' }).in('id', itemIds);
@@ -205,12 +239,9 @@ export default function Pedidos() {
         return; 
     }
 
-    // --- MODO IMPRESSORA ---
-    // Separação de Setores
     const kitchenItems = [];
     const barItems = [];
     
-    // Se tem item não mapeado e é iFood, mandamos TUDO para AMBOS para garantir
     if (hasUnmappedItems && isIfood) {
         try {
             await PrinterService.printSectorTicket(order, allItems, "COZINHA (COMPLETO)");
@@ -219,14 +250,12 @@ export default function Pedidos() {
         } catch (error) {
             console.error(error);
             toast.error("Erro QZ Tray.", { id: toastId });
-            // Fallback Janela
-            setPrintData(order); // Passa o pedido completo para o fallback lidar
+            setPrintData(order); 
             setPrintTrigger(p => p + 1);
         }
         return;
     }
 
-    // Se tudo mapeado, separa bonitinho
     order.sale_items.forEach(item => {
         const dest = item.product?.destination?.toLowerCase() || '';
         const name = (item.product?.name || item.product_name || '').toLowerCase();
@@ -236,7 +265,6 @@ export default function Pedidos() {
         } else if (dest === 'cozinha') {
             kitchenItems.push(item);
         } else {
-            // Fallback por palavra-chave
             if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink') || name.includes('lata')) {
                 barItems.push(item);
             } else {
@@ -259,7 +287,6 @@ export default function Pedidos() {
         console.error("Erro QZ Tray:", error);
         toast.error("QZ Offline. Usando Janela.", { id: toastId });
         
-        // Fallback Janela
         const tickets = [];
         if (kitchenItems.length > 0) tickets.push({ sector: 'COZINHA', items: kitchenItems });
         if (barItems.length > 0) tickets.push({ sector: 'BAR', items: barItems });
@@ -277,7 +304,6 @@ export default function Pedidos() {
     }
   }, [useKDS, audioEnabled]);
 
-  // --- IMPRESSÃO DE RECIBO (VIA CLIENTE) ---
   const handlePrintReceipt = useCallback(async (order) => {
       const toastId = toast.loading("Imprimindo recibo...");
       try {
@@ -301,8 +327,9 @@ export default function Pedidos() {
         const currentCompanyId = emp?.company_id || user.user_metadata?.company_id || (String(user.id) === '10' ? 1 : null);
 
         if (order.channel === 'IFOOD' && order.ifood_order_id) {
-            const { error } = await supabase.functions.invoke('ifood-proxy/update-status', {
+            const { error } = await supabase.functions.invoke('ifood-proxy', {
                 body: { 
+                    action: 'update-status', 
                     companyId: currentCompanyId, 
                     ifoodOrderId: order.ifood_order_id, 
                     status: newStatus,
@@ -318,7 +345,6 @@ export default function Pedidos() {
         
         if (order.channel !== 'IFOOD') toast.success(`Movido para: ${newStatus}`, { id: toastId });
         
-        // --- GATILHO DE PRODUÇÃO AO CONFIRMAR ---
         if (newStatus === 'Em Preparo') {
             handlePrint(order); 
         }
@@ -334,7 +360,7 @@ export default function Pedidos() {
     }
   }, [user, getSearchColumn, handlePrint, fetchOrders]); 
 
-  // --- O CÉREBRO DO AUTO-ACEITE ---
+  // --- AUTO-ACEITE (Processa o que chegou do Polling) ---
   useEffect(() => {
     if (loading || orders.length === 0) return;
 
@@ -350,12 +376,12 @@ export default function Pedidos() {
             const isIfood = order.channel === 'IFOOD';
             const status = (order.status || '').toUpperCase();
 
-            // Correção: Verifica se não está carregando config para não dar falso negativo
+            // Só roda se a config já carregou e é true
             if (isIfood && (status === 'PENDING' || status === 'PLACED') && autoAcceptInfo.enabled && !autoAcceptInfo.loading) {
                 console.log(`🤖 AUTO-ACEITE: Pedido #${order.id}. Confirmando...`);
                 handleStatusChange(order, 'Em Preparo');
             }
-            // Se chegou já confirmado externamente
+            // Notificações para pedidos já aceitos externamente
             else if (status === 'EM PREPARO' || status === 'CONFIRMED') {
                  handlePrint(order);
                  if (audioEnabled) {
@@ -393,7 +419,6 @@ export default function Pedidos() {
 
   return (
     <div className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
-      {/* COMPONENTES DE FALLBACK (MODO JANELA) */}
       {printData && (
         <div className="hidden">
              <KitchenTicket tickets={printData.tickets} orderInfo={printData.orderInfo} date={printData.date} />
@@ -407,7 +432,6 @@ export default function Pedidos() {
         </div>
         
         <div className="flex items-center gap-4">
-            {/* BOTÃO DE ALTERNÂNCIA KDS/PRINT */}
             <button 
                 onClick={toggleKDSMode} 
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
@@ -427,9 +451,14 @@ export default function Pedidos() {
                 </button>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
                 {!audioEnabled && <button onClick={enableAudio} className="bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Volume2 size={16}/> Ativar Som</button>}
-                <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Bike size={16}/> iFood Online</span>
+                
+                {/* INDICADOR DE STATUS DO POLLING */}
+                <div className={`px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2 border transition-all ${isPolling ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-red-100 text-red-800 border-red-200'}`}>
+                    <Bike size={16}/> 
+                    {isPolling ? <RefreshCw size={14} className="animate-spin"/> : 'iFood Online'}
+                </div>
             </div>
         </div>
       </div>

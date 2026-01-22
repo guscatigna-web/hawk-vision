@@ -1,6 +1,22 @@
 [
   {
     "estrutura_banco": {
+      "tabela": "audit_logs",
+      "colunas": [
+        "id (bigint)",
+        "table_name (text)",
+        "operation (text)",
+        "record_id (text)",
+        "old_data (jsonb)",
+        "new_data (jsonb)",
+        "changed_by (uuid)",
+        "company_id (bigint)",
+        "created_at (timestamp with time zone)"
+      ]
+    }
+  },
+  {
+    "estrutura_banco": {
       "tabela": "cashier_sessions",
       "colunas": [
         "id (bigint)",
@@ -14,7 +30,8 @@
         "status (text)",
         "notes (text)",
         "type (text)",
-        "company_id (bigint)"
+        "company_id (bigint)",
+        "closing_data (jsonb)"
       ]
     }
   },
@@ -162,9 +179,9 @@
       "colunas": [
         "id (bigint)",
         "environment (text)",
-        "csc_token (text)",
+        "csc_token (bytea)",
         "csc_id (text)",
-        "certificate_password (text)",
+        "certificate_password (bytea)",
         "updated_at (timestamp with time zone)",
         "company_id (bigint)"
       ]
@@ -212,10 +229,10 @@
         "auto_print (boolean)",
         "updated_at (timestamp with time zone)",
         "client_id (text)",
-        "client_secret (text)",
+        "client_secret (bytea)",
         "temp_verifier (text)",
-        "access_token (text)",
-        "refresh_token (text)",
+        "access_token (bytea)",
+        "refresh_token (bytea)",
         "last_synced_at (timestamp with time zone)",
         "error_log (jsonb)",
         "connection_status (text)"
@@ -308,7 +325,8 @@
         "company_id (bigint)",
         "product_name (text)",
         "total (numeric)",
-        "observation (text)"
+        "observation (text)",
+        "created_at (timestamp with time zone)"
       ]
     }
   },
@@ -349,7 +367,9 @@
         "channel (text)",
         "ifood_order_id (text)",
         "cashier_session_id (bigint)",
-        "display_id (text)"
+        "display_id (text)",
+        "notes (text)",
+        "people_count (integer)"
       ]
     }
   },

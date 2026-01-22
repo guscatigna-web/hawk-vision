@@ -8,7 +8,7 @@ const CORSA_HEADERS = {
 };
 
 serve(async (req) => {
-  console.log(`🔔 [EDGE] Request: ${req.method} ${req.url}`);
+  console.log(`🔔 [EDGE SECURE] Request: ${req.method} ${req.url}`);
 
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORSA_HEADERS });
 
@@ -21,10 +21,8 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const clientId = Deno.env.get("IFOOD_CLIENT_ID");
-    const clientSecret = Deno.env.get("IFOOD_CLIENT_SECRET");
-
-    if (!clientId || !clientSecret) throw new Error("Credenciais iFood ausentes.");
+    const envClientId = Deno.env.get("IFOOD_CLIENT_ID");
+    const envClientSecret = Deno.env.get("IFOOD_CLIENT_SECRET");
 
     // --- LEITURA UNIFICADA DO BODY ---
     let body: any = {};
@@ -35,7 +33,7 @@ serve(async (req) => {
         } catch (e) { console.warn("Body vazio/inválido", e); }
     }
 
-    // --- ROUTER INTELIGENTE ---
+    // --- ROUTER ---
     let action = body.action || null;
     if (!action) {
         if (pathname.endsWith("/init-auth")) action = "init-auth";
@@ -44,15 +42,25 @@ serve(async (req) => {
         else if (pathname.endsWith("/polling")) action = "polling";
         else if (pathname.endsWith("/update-status")) action = "update-status";
     }
-    console.log(`🚀 Ação Identificada: ${action}`);
 
-    // --- HELPER: Refresh Token ---
-    async function refreshIfoodToken(oldRefreshToken: string, companyId: string) {
-      console.log("🔄 Renovando token...");
+    // --- HELPER SEGURO: Obter Integração Descriptografada ---
+    // Usa a RPC para o banco descriptografar a chave mestra e entregar o token limpo
+    async function getIntegrationSecure(companyId: any) {
+        const { data, error } = await supabaseAdmin
+            .rpc('get_ifood_creds_rpc', { p_company_id: Number(companyId) })
+            .maybeSingle();
+        
+        if (error || !data) throw new Error("Integração não encontrada ou erro de criptografia.");
+        return data; // Retorna { access_token, refresh_token, etc } já em texto plano
+    }
+
+    // --- HELPER SEGURO: Refresh Token ---
+    async function refreshIfoodToken(oldRefreshToken: string, companyId: any, clientId: string, clientSecret: string) {
+      console.log("🔄 Renovando token (Secure)...");
       const params = new URLSearchParams();
       params.append("grantType", "refresh_token");
-      params.append("clientId", clientId!);
-      params.append("clientSecret", clientSecret!);
+      params.append("clientId", clientId);
+      params.append("clientSecret", clientSecret);
       params.append("refreshToken", oldRefreshToken);
 
       const res = await fetch(`${IFOOD_API_URL}/authentication/v1.0/oauth/token`, {
@@ -65,16 +73,17 @@ serve(async (req) => {
       }
       const data = await res.json();
       
-      await supabaseAdmin.from("integrations_ifood").update({
-        access_token: data.accessToken,
-        refresh_token: data.refreshToken,
-        last_synced_at: new Date().toISOString()
-      }).eq("company_id", companyId);
+      // Salva criptografado via RPC, usando a chave mestra do banco
+      await supabaseAdmin.rpc('update_ifood_tokens_rpc', {
+          p_company_id: Number(companyId),
+          p_access_token: data.accessToken,
+          p_refresh_token: data.refreshToken
+      });
 
       return data.accessToken;
     }
 
-    // --- HELPER: Auto-Cicatrizante ---
+    // --- HELPER: Auto-Cicatrizante (Display ID) ---
     async function fetchAndSaveDisplayId(orderId: string, token: string, companyId: number) {
         try {
             const res = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${orderId}`, {
@@ -92,132 +101,120 @@ serve(async (req) => {
         return null;
     }
 
-    // --- ROTA: UPDATE PRODUCT STATUS ---
-    if (action === "update-product-status") {
-        const { companyId, erpProductId, newStock } = body;
-        const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
-        if (!integration) throw new Error("Integração não encontrada.");
-        let token = integration.access_token;
+    // ============================================================
+    // AÇÕES
+    // ============================================================
 
-        const { data: mapping } = await supabaseAdmin.from("ifood_menu_mapping").select("ifood_product_id").eq("erp_product_id", erpProductId).eq("company_id", companyId).maybeSingle();
-        if (!mapping) return new Response(JSON.stringify({ skipped: true }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
-
-        const ifoodId = mapping.ifood_product_id;
-        const merchantId = integration.merchant_id;
-        const targetStatus = newStock > 0 ? 'AVAILABLE' : 'UNAVAILABLE';
-
-        const url = `${IFOOD_API_URL}/catalog/v1.0/merchants/${merchantId}/products/${ifoodId}/status`;
-        let res = await fetch(url, {
-            method: 'PATCH', headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: targetStatus })
-        });
-
-        if (res.status === 401) {
-             token = await refreshIfoodToken(integration.refresh_token, companyId);
-             res = await fetch(url, { method: 'PATCH', headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: targetStatus }) });
-        }
-
-        if (!res.ok) return new Response(JSON.stringify({ error: await res.text() }), { status: 200, headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
-        return new Response(JSON.stringify({ success: true, status: targetStatus }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
-    }
-
-    // --- ROTA: MANUAL CATALOG UPDATE ---
-    if (action === "manual-catalog-update") {
-        const { companyId, ifoodProductId, updateType, value } = body;
-        const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
-        if (!integration) throw new Error("Integração não encontrada.");
-        let token = integration.access_token;
-        const merchantId = integration.merchant_id;
-
-        let endpoint = "";
-        let payload = {};
-
-        if (updateType === 'status') {
-            endpoint = `/catalog/v1.0/merchants/${merchantId}/products/${ifoodProductId}/status`;
-            payload = { status: value };
-        } else if (updateType === 'price') {
-            endpoint = `/catalog/v1.0/merchants/${merchantId}/products/${ifoodProductId}/price`;
-            payload = { value: Number(value) };
-        }
-
-        const url = `${IFOOD_API_URL}${endpoint}`;
-        let res = await fetch(url, { method: 'PATCH', headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-
-        if (res.status === 401) {
-             token = await refreshIfoodToken(integration.refresh_token, companyId);
-             res = await fetch(url, { method: 'PATCH', headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        }
-
-        if (!res.ok) return new Response(JSON.stringify({ error: await res.text() }), { status: 400, headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
-        return new Response(JSON.stringify({ success: true }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
-    }
-
-    // --- ROTAS PADRÃO (Init Auth, Exchange, Polling, Menu) ---
-    // Mantidas intactas do código anterior para preservar estabilidade
-    // (Apenas resumindo aqui para caber na resposta, mas você deve manter o bloco igual ao anterior)
-    
+    // 1. INIT AUTH (Apenas gera URL, não precisa de banco)
     if (action === "init-auth") {
-        const form = new URLSearchParams(); form.append("clientId", clientId);
+        if (!envClientId) throw new Error("IFOOD_CLIENT_ID não configurado no ENV.");
+        const form = new URLSearchParams(); form.append("clientId", envClientId);
         const res = await fetch(`${IFOOD_API_URL}/authentication/v1.0/oauth/userCode`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form });
         const data = await res.json();
         return new Response(JSON.stringify({ url: data.verificationUrlComplete, verifier: data.authorizationCodeVerifier }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
     }
 
+    // 2. EXCHANGE (Troca código por token e SALVA CRIPTOGRAFADO)
     if (action === "exchange") {
         const { authCode, companyId, verifier } = body;
-        const params = new URLSearchParams(); params.append("grantType", "authorization_code"); params.append("clientId", clientId); params.append("clientSecret", clientSecret); params.append("authorizationCode", authCode); params.append("authorizationCodeVerifier", verifier || "");
+        if (!envClientId || !envClientSecret) throw new Error("Credenciais ENV ausentes.");
+
+        const params = new URLSearchParams(); 
+        params.append("grantType", "authorization_code"); 
+        params.append("clientId", envClientId); 
+        params.append("clientSecret", envClientSecret); 
+        params.append("authorizationCode", authCode); 
+        params.append("authorizationCodeVerifier", verifier || "");
+        
         const res = await fetch(`${IFOOD_API_URL}/authentication/v1.0/oauth/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params });
         const data = await res.json();
+        
         if(!res.ok) throw new Error(JSON.stringify(data));
+        
+        // Pega Merchant ID
         const merchantRes = await fetch(`${IFOOD_API_URL}/merchant/v1.0/merchants`, { headers: { "Authorization": `Bearer ${data.accessToken}` } });
         const mData = await merchantRes.json();
-        await supabaseAdmin.from("integrations_ifood").upsert({ company_id: companyId, merchant_id: mData[0]?.id, access_token: data.accessToken, refresh_token: data.refreshToken, client_id: clientId, status: "CONNECTED", last_synced_at: new Date().toISOString() }, { onConflict: "company_id" });
+        
+        // Salva via RPC Seguro (Criptografando)
+        await supabaseAdmin.rpc('upsert_ifood_connection_rpc', {
+            p_company_id: Number(companyId),
+            p_merchant_id: mData[0]?.id,
+            p_client_id: envClientId,
+            p_client_secret: envClientSecret,
+            p_access_token: data.accessToken,
+            p_refresh_token: data.refreshToken
+        });
+
         return new Response(JSON.stringify({ success: true, merchantId: mData[0]?.id }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
     }
 
+    // 3. MENU
     if (action === "menu") {
         const { companyId } = body;
-        const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
-        if (!integration) throw new Error("Integração não encontrada.");
+        const integration = await getIntegrationSecure(companyId); // <--- USO DO RPC SEGURO
+        
         let token = integration.access_token;
         const merchantId = integration.merchant_id;
+        
+        const cId = integration.client_id || envClientId;
+        const cSec = integration.client_secret || envClientSecret;
+
         let catRes = await fetch(`${IFOOD_API_URL}/catalog/v1.0/merchants/${merchantId}/catalogs`, { headers: { "Authorization": `Bearer ${token}` } });
+        
         if (catRes.status === 401) {
-            try { token = await refreshIfoodToken(integration.refresh_token, companyId); catRes = await fetch(`${IFOOD_API_URL}/catalog/v1.0/merchants/${merchantId}/catalogs`, { headers: { "Authorization": `Bearer ${token}` } }); } 
-            catch (e) { throw new Error("Sessão expirada."); }
+            token = await refreshIfoodToken(integration.refresh_token, companyId, cId, cSec);
+            catRes = await fetch(`${IFOOD_API_URL}/catalog/v1.0/merchants/${merchantId}/catalogs`, { headers: { "Authorization": `Bearer ${token}` } });
         }
+        
         const catalogs = await catRes.json();
         const activeCatalog = catalogs.find((c: any) => c.context === 'DELIVERY' && c.status === 'AVAILABLE') || catalogs.find((c: any) => c.status === 'AVAILABLE') || catalogs[0];
+        
         if (!activeCatalog) return new Response(JSON.stringify({ items: [] }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
+        
         const catalogId = activeCatalog.catalogId;
         try {
             const menuRes = await fetch(`${IFOOD_API_URL}/catalog/v1.0/catalogs/${catalogId}/categories?includeItems=true`, { headers: { "Authorization": `Bearer ${token}` } });
             if (!menuRes.ok) return new Response(JSON.stringify({ items: [] }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
+            
             const categories = await menuRes.json();
             const flatItems = [];
-            for (const cat of categories) { if (cat.items) { for (const item of cat.items) { flatItems.push({ id: item.id, name: item.name, price: item.price?.value || 0, category: cat.name, status: item.status }); } } }
+            for (const cat of categories) { 
+                if (cat.items) { 
+                    for (const item of cat.items) { 
+                        flatItems.push({ id: item.id, name: item.name, price: item.price?.value || 0, category: cat.name, status: item.status }); 
+                    } 
+                } 
+            }
             return new Response(JSON.stringify({ items: flatItems }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
         } catch (menuErr) { return new Response(JSON.stringify({ items: [] }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } }); }
     }
 
+    // 4. POLLING (Rota Crítica)
     if (action === "polling") {
       const { companyId } = body;
-      const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
-      if (!integration) throw new Error("Integração não encontrada.");
+      const integration = await getIntegrationSecure(companyId); // <--- USO DO RPC SEGURO
+      
       let token = integration.access_token;
+      const cId = integration.client_id || envClientId;
+      const cSec = integration.client_secret || envClientSecret;
       
       let eventsRes = await fetch(`${IFOOD_API_URL}/order/v1.0/events:polling`, { headers: { "Authorization": `Bearer ${token}` } });
+      
       if (eventsRes.status === 401) {
-        token = await refreshIfoodToken(integration.refresh_token, companyId);
+        token = await refreshIfoodToken(integration.refresh_token, companyId, cId, cSec);
         eventsRes = await fetch(`${IFOOD_API_URL}/order/v1.0/events:polling`, { headers: { "Authorization": `Bearer ${token}` } });
       }
+      
       if (eventsRes.status === 204) return new Response(JSON.stringify({ message: "Nenhum evento", orders: [] }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
 
       const events = await eventsRes.json();
       const newOrders = [];
       const eventsToAck = [];
       const numericCompanyId = Number(companyId);
+      
       const { data: openSession } = await supabaseAdmin.from('cashier_sessions').select('id').eq('company_id', numericCompanyId).eq('status', 'open').order('opened_at', { ascending: false }).limit(1).maybeSingle();
       const sessionId = openSession?.id || null;
+      
       const { data: mappings } = await supabaseAdmin.from('ifood_menu_mapping').select('ifood_product_id, erp_product_id').eq('company_id', companyId);
       const productMap = new Map();
       mappings?.forEach((m: any) => { if (m.erp_product_id) productMap.set(m.ifood_product_id, m.erp_product_id); });
@@ -262,11 +259,15 @@ serve(async (req) => {
       return new Response(JSON.stringify({ message: `${events.length} eventos processados`, newOrdersCount: newOrders.length }), { headers: { ...CORSA_HEADERS, "Content-Type": "application/json" } });
     }
 
+    // 5. UPDATE STATUS
     if (action === "update-status") {
         const { companyId, ifoodOrderId, status, reason } = body;
-        const { data: integration } = await supabaseAdmin.from("integrations_ifood").select("*").eq("company_id", companyId).single();
-        if (!integration) throw new Error("Integração não encontrada.");
+        const integration = await getIntegrationSecure(companyId); // <--- USO DO RPC SEGURO
+        
         let token = integration.access_token;
+        const cId = integration.client_id || envClientId;
+        const cSec = integration.client_secret || envClientSecret;
+
         const { data: sale } = await supabaseAdmin.from('sales').select('display_id').eq('ifood_order_id', ifoodOrderId).single();
         if (sale && !sale.display_id) await fetchAndSaveDisplayId(ifoodOrderId, token, companyId);
         
@@ -282,7 +283,7 @@ serve(async (req) => {
         if (endpoint) {
              let ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, { method: "POST", headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
              if (ifoodRes.status === 401) {
-                token = await refreshIfoodToken(integration.refresh_token, companyId);
+                token = await refreshIfoodToken(integration.refresh_token, companyId, cId, cSec);
                 ifoodRes = await fetch(`${IFOOD_API_URL}/order/v1.0/orders/${ifoodOrderId}/${endpoint}`, { method: "POST", headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
              }
              if (!ifoodRes.ok) {
