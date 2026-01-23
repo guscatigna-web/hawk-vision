@@ -183,7 +183,22 @@
         "csc_id (text)",
         "certificate_password (bytea)",
         "updated_at (timestamp with time zone)",
-        "company_id (bigint)"
+        "company_id (bigint)",
+        "client_id (text)",
+        "client_secret (text)"
+      ]
+    }
+  },
+  {
+    "estrutura_banco": {
+      "tabela": "fiscal_sequences",
+      "colunas": [
+        "id (bigint)",
+        "company_id (bigint)",
+        "environment (text)",
+        "serie (integer)",
+        "last_number (bigint)",
+        "updated_at (timestamp with time zone)"
       ]
     }
   },
