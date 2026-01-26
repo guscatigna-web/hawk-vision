@@ -30,7 +30,8 @@ import toast from 'react-hot-toast'
 
 export function Estoque() {
   const { user } = useAuth()
-  const isManager = user?.role === 'Gerente'
+  // Permite edição para Gerente ou Master
+  const isManager = user?.role === 'Gerente' || user?.role === 'Master'
 
   // Estados de Dados
   const [products, setProducts] = useState([])
@@ -62,8 +63,8 @@ export function Estoque() {
 
       if (error) throw error
       
-      setProducts(data)
-      const uniqueStockCats = [...new Set(data.map(p => p.stock_category).filter(Boolean))]
+      setProducts(data || [])
+      const uniqueStockCats = [...new Set(data?.map(p => p.stock_category).filter(Boolean))]
       setStockCategories(uniqueStockCats.sort())
 
     } catch (error) {
@@ -127,7 +128,11 @@ export function Estoque() {
   async function handleSaveProduct(productData) {
     try {
       // Garante que active seja true ao criar/editar se não especificado
-      const payload = { ...productData, active: productData.active ?? true }
+      const payload = { 
+        ...productData, 
+        active: productData.active ?? true,
+        company_id: user.company_id // Garante tenant correto
+      }
       
       if (productToEdit) {
         const { error } = await supabase.from('products').update(payload).eq('id', productToEdit.id)
@@ -207,6 +212,7 @@ export function Estoque() {
     return statusMatch && matchesSearch && matchesCategory
   })
 
+  // Componente interno para barra de nível
   const StockLevelBar = ({ current, min, max }) => {
     const visualMax = max || (min ? min * 3 : 100)
     const percentage = Math.min(100, Math.max(0, (current / visualMax) * 100))
@@ -225,7 +231,7 @@ export function Estoque() {
   if (loading) return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin text-blue-600" size={48} /></div>
 
   return (
-    <div className="space-y-6" onClick={() => setMenuOpenId(null)}>
+    <div className="space-y-6 pb-20" onClick={() => setMenuOpenId(null)}>
       
       {/* Portal de Impressão */}
       {isPrinting && (
@@ -279,52 +285,63 @@ export function Estoque() {
         </PrintPortal>
       )}
 
-      {/* Header e Ações Principais */}
+      {/* --- HEADER RESPONSIVO --- */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
             <Package className="text-blue-600" /> Gerenciamento de Estoque
           </h1>
-          <p className="text-slate-500">Controle físico e produção</p>
+          <p className="text-slate-500 text-sm">Controle físico e produção</p>
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-           {/* Toggle Arquivados */}
-          <button 
-            onClick={() => setViewArchived(!viewArchived)}
-            className={`px-3 py-2 rounded-lg border text-sm font-medium flex items-center gap-2 transition-colors ${
-              viewArchived 
-                ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' 
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-             {viewArchived ? <Undo2 size={16}/> : <Archive size={16}/>}
-             {viewArchived ? 'Voltar para Ativos' : 'Ver Arquivados'}
-          </button>
-
-          <div className="h-8 w-px bg-slate-300 mx-1 hidden md:block"></div>
-
-          <button onClick={handlePrint} className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg border bg-white" title="Imprimir"><Printer size={20} /></button>
-          <button onClick={handleExportExcel} className="p-2 text-green-700 hover:bg-green-50 rounded-lg border border-green-200 bg-white" title="Excel"><FileSpreadsheet size={20} /></button>
-          {isManager && (
-            <button onClick={() => { setProductToEdit(null); setIsProductModalOpen(true) }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium">
-              <Plus size={20} /> Novo Produto
+        {/* Grupo de Ações - Botões Full Width no Mobile */}
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+           {/* Botão Novo Produto (Visível apenas para Gerentes/Master) */}
+           {isManager && (
+            <button 
+                onClick={() => { setProductToEdit(null); setIsProductModalOpen(true); }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 md:py-2 rounded-lg flex items-center justify-center gap-2 font-bold shadow-sm transition-colors active:scale-95 w-full md:w-auto"
+            >
+                <Plus size={20} /> Novo Produto
             </button>
-          )}
+           )}
+
+           <button 
+             onClick={() => setViewArchived(!viewArchived)}
+             className={`px-3 py-2 rounded-lg border text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
+               viewArchived 
+                 ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' 
+                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+             }`}
+           >
+              {viewArchived ? <Undo2 size={16}/> : <Archive size={16}/>}
+              {viewArchived ? 'Voltar para Ativos' : 'Arquivados'}
+           </button>
+
+           <div className="flex gap-2 w-full md:w-auto">
+             <button onClick={handlePrint} className="flex-1 md:flex-none p-2 text-slate-600 hover:bg-slate-100 rounded-lg border bg-white flex justify-center items-center" title="Imprimir"><Printer size={20} /></button>
+             <button onClick={handleExportExcel} className="flex-1 md:flex-none p-2 text-green-700 hover:bg-green-50 rounded-lg border border-green-200 bg-white flex justify-center items-center" title="Excel"><FileSpreadsheet size={20} /></button>
+           </div>
         </div>
       </div>
 
-      {/* Barra de Busca e Filtros */}
+      {/* --- BARRA DE FILTROS RESPONSIVA --- */}
       <div className={`flex flex-col md:flex-row gap-4 p-4 rounded-xl shadow-sm border no-print transition-colors ${viewArchived ? 'bg-amber-50/50 border-amber-100' : 'bg-white border-slate-100'}`}>
         <div className="relative flex-1">
           <Search className="absolute left-3 top-3 text-slate-400" size={20} />
-          <input type="text" placeholder="Buscar produto ou código de barras..." className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+          <input 
+            type="text" 
+            placeholder="Buscar produto ou código de barras..." 
+            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" 
+            value={searchTerm} 
+            onChange={e => setSearchTerm(e.target.value)} 
+          />
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full md:w-auto">
             <Filter className="text-slate-400 hidden md:block" size={20}/>
             <select 
-              className="p-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]" 
+              className="w-full md:w-auto p-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]" 
               value={selectedCategory} 
               onChange={e => setSelectedCategory(e.target.value)}
             >
@@ -334,159 +351,161 @@ export function Estoque() {
         </div>
       </div>
 
-      {/* Tabela de Produtos */}
+      {/* --- TABELA COM SCROLL HORIZONTAL (MOBILE) --- */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden no-print">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              <th className="p-4 font-semibold text-slate-600 text-sm">Produto</th>
-              <th className="p-4 font-semibold text-slate-600 text-sm">Categoria (Estoque)</th>
-              <th className="p-4 font-semibold text-slate-600 text-sm text-right">Custo</th>
-              <th className="p-4 font-semibold text-slate-600 text-sm text-center">Nível</th>
-              <th className="p-4 font-semibold text-slate-600 text-sm text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredProducts.length === 0 && (
+        <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[600px]">
+              <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500">
-                        Nenhum produto {viewArchived ? 'arquivado' : 'ativo'} encontrado.
-                    </td>
+                  <th className="p-4 font-semibold text-slate-600 text-sm">Produto</th>
+                  <th className="p-4 font-semibold text-slate-600 text-sm">Categoria (Estoque)</th>
+                  <th className="p-4 font-semibold text-slate-600 text-sm text-right">Custo</th>
+                  <th className="p-4 font-semibold text-slate-600 text-sm text-center">Nível</th>
+                  <th className="p-4 font-semibold text-slate-600 text-sm text-right">Ações</th>
                 </tr>
-            )}
-            {filteredProducts.map(product => {
-              const isLowStock = product.track_stock && product.stock_quantity <= (product.min_stock_quantity || 0)
-              
-              const isWip = product.type === 'wip'
-              const isResaleCategory = ['Bebidas', 'Tabacaria', 'Mercearia', 'Bomboniere', 'Revenda'].includes(product.stock_category)
-              const isSaleWithProduction = product.type === 'sale' && !isResaleCategory
-              
-              const showProduction = (isWip || isSaleWithProduction) && !viewArchived // Não mostra produção se estiver arquivado
-
-              return (
-                <tr key={product.id} className={`hover:bg-slate-50 transition-colors group ${!product.active ? 'bg-slate-50/80' : ''}`}>
-                  <td className="p-4">
-                    <div className={`font-medium text-slate-800 ${!product.active ? 'opacity-50 line-through decoration-slate-400' : ''}`}>
-                        {product.name}
-                    </div>
-                    {product.barcode && <div className="text-xs text-slate-400">{product.barcode}</div>}
-                    {!product.active && <span className="text-[10px] uppercase font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-2 inline-block md:hidden">Arquivado</span>}
-                  </td>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredProducts.length === 0 && (
+                    <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-500">
+                            Nenhum produto {viewArchived ? 'arquivado' : 'ativo'} encontrado.
+                        </td>
+                    </tr>
+                )}
+                {filteredProducts.map(product => {
+                  const isLowStock = product.track_stock && product.stock_quantity <= (product.min_stock_quantity || 0)
                   
-                  <td className="p-4">
-                    <span className={`text-xs px-2 py-1 rounded-full border ${!product.active ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
-                      {product.stock_category || 'Geral'}
-                    </span>
-                  </td>
+                  const isWip = product.type === 'wip'
+                  const isResaleCategory = ['Bebidas', 'Tabacaria', 'Mercearia', 'Bomboniere', 'Revenda'].includes(product.stock_category)
+                  const isSaleWithProduction = product.type === 'sale' && !isResaleCategory
+                  
+                  const showProduction = (isWip || isSaleWithProduction) && !viewArchived
 
-                  <td className="p-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                        <span className={`font-medium text-slate-600 ${!product.active ? 'opacity-50' : ''}`}>R$ {Number(product.cost_price || 0).toFixed(2)}</span>
-                        
-                        {/* BOTÃO RECALCULAR CUSTO (Apenas Ativos) */}
-                        {showProduction && isManager && (
-                            <button 
-                                onClick={() => handleUpdateCostFromRecipe(product)}
-                                className="text-slate-300 hover:text-blue-600 transition-colors"
-                                title="Recalcular custo pela Ficha Técnica"
-                            >
-                                <RefreshCw size={14}/>
-                            </button>
-                        )}
-                    </div>
-                  </td>
-
-                  <td className="p-4">
-                    {!product.track_stock ? (
-                      <div className="text-center text-slate-400 text-sm italic">--</div>
-                    ) : (
-                      <div className={`flex flex-col items-center w-full max-w-[120px] mx-auto ${!product.active ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center justify-between w-full text-xs mb-1">
-                           <span className={`font-bold ${isLowStock && product.active ? 'text-red-600' : 'text-slate-700'}`}>
-                             {product.stock_quantity} <span className="text-slate-400 font-normal">{product.unit || 'un'}</span>
-                           </span>
-                           {isLowStock && product.active && <AlertTriangle size={12} className="text-red-500" />}
+                  return (
+                    <tr key={product.id} className={`hover:bg-slate-50 transition-colors group ${!product.active ? 'bg-slate-50/80' : ''}`}>
+                      <td className="p-4">
+                        <div className={`font-medium text-slate-800 ${!product.active ? 'opacity-50 line-through decoration-slate-400' : ''}`}>
+                            {product.name}
                         </div>
-                        <StockLevelBar current={product.stock_quantity} min={product.min_stock_quantity} />
-                      </div>
-                    )}
-                  </td>
+                        {product.barcode && <div className="text-xs text-slate-400">{product.barcode}</div>}
+                        {!product.active && <span className="text-[10px] uppercase font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-2 inline-block md:hidden">Arquivado</span>}
+                      </td>
+                      
+                      <td className="p-4">
+                        <span className={`text-xs px-2 py-1 rounded-full border ${!product.active ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                          {product.stock_category || 'Geral'}
+                        </span>
+                      </td>
 
-                  <td className="p-4 text-right flex justify-end items-center gap-1">
-                    
-                    {/* Ações de Produção (Apenas Ativos) */}
-                    {showProduction && (
-                      <>
-                        <button onClick={() => setSelectedProductForRecipe(product)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Ficha Técnica">
-                          <ClipboardList size={18} />
-                        </button>
-                        <button onClick={() => setSelectedProductForProduction(product)} className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors" title="Produzir">
-                          <ChefHat size={18} />
-                        </button>
-                      </>
-                    )}
-
-                    {isManager && product.track_stock && product.active && (
-                       <button onClick={() => setSelectedProductForAdjustment(product)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Ajustar Estoque">
-                         <ArrowRightLeft size={18} />
-                       </button>
-                    )}
-
-                     {/* NOVO: Botão de Restaurar (Visível Apenas em Arquivados) para acesso rápido */}
-                     {!product.active && isManager && (
-                        <button 
-                            onClick={() => handleToggleActive(product)}
-                            className="p-2 text-green-600 hover:bg-green-50 rounded transition-colors"
-                            title="Restaurar Produto"
-                        >
-                            <Undo2 size={18} />
-                        </button>
-                     )}
-
-                    {isManager && (
-                      <div className="relative">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === product.id ? null : product.id) }}
-                          className="p-2 hover:bg-slate-200 rounded text-slate-500"
-                        >
-                          <MoreHorizontal size={18} />
-                        </button>
-
-                        {menuOpenId === product.id && (
-                          <div className="absolute right-0 top-10 w-48 bg-white shadow-xl rounded-lg border border-slate-100 z-50 overflow-hidden">
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                            <span className={`font-medium text-slate-600 ${!product.active ? 'opacity-50' : ''}`}>R$ {Number(product.cost_price || 0).toFixed(2)}</span>
                             
-                            {/* Editar (Apenas Ativos) */}
-                            {product.active && (
-                                <button onClick={() => { setProductToEdit(product); setIsProductModalOpen(true) }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center">
-                                <Pencil size={14} className="mr-2"/> Editar
+                            {/* BOTÃO RECALCULAR CUSTO (Apenas Ativos) */}
+                            {showProduction && isManager && (
+                                <button 
+                                    onClick={() => handleUpdateCostFromRecipe(product)}
+                                    className="text-slate-300 hover:text-blue-600 transition-colors"
+                                    title="Recalcular custo pela Ficha Técnica"
+                                >
+                                    <RefreshCw size={14}/>
                                 </button>
                             )}
+                        </div>
+                      </td>
 
-                            {/* Botão Contextual: Arquivar ou Restaurar */}
-                            <button 
-                                onClick={() => handleToggleActive(product)} 
-                                className={`w-full text-left px-4 py-2 text-sm flex items-center border-t border-slate-50 ${product.active ? 'text-red-600 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'}`}
-                            >
-                              {product.active ? (
-                                  <>
-                                    <Archive size={14} className="mr-2"/> Arquivar
-                                  </>
-                              ) : (
-                                  <>
-                                    <Undo2 size={14} className="mr-2"/> Restaurar
-                                  </>
-                              )}
-                            </button>
+                      <td className="p-4">
+                        {!product.track_stock ? (
+                          <div className="text-center text-slate-400 text-sm italic">--</div>
+                        ) : (
+                          <div className={`flex flex-col items-center w-full max-w-[120px] mx-auto ${!product.active ? 'opacity-50' : ''}`}>
+                            <div className="flex items-center justify-between w-full text-xs mb-1">
+                              <span className={`font-bold ${isLowStock && product.active ? 'text-red-600' : 'text-slate-700'}`}>
+                                {product.stock_quantity} <span className="text-slate-400 font-normal">{product.unit || 'un'}</span>
+                              </span>
+                              {isLowStock && product.active && <AlertTriangle size={12} className="text-red-500" />}
+                            </div>
+                            <StockLevelBar current={product.stock_quantity} min={product.min_stock_quantity} />
                           </div>
                         )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                      </td>
+
+                      <td className="p-4 text-right flex justify-end items-center gap-1">
+                        
+                        {/* Ações de Produção (Apenas Ativos) */}
+                        {showProduction && (
+                          <>
+                            <button onClick={() => setSelectedProductForRecipe(product)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Ficha Técnica">
+                              <ClipboardList size={18} />
+                            </button>
+                            <button onClick={() => setSelectedProductForProduction(product)} className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors" title="Produzir">
+                              <ChefHat size={18} />
+                            </button>
+                          </>
+                        )}
+
+                        {isManager && product.track_stock && product.active && (
+                          <button onClick={() => setSelectedProductForAdjustment(product)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Ajustar Estoque">
+                            <ArrowRightLeft size={18} />
+                          </button>
+                        )}
+
+                        {/* Botão de Restaurar (Visível Apenas em Arquivados) para acesso rápido */}
+                        {!product.active && isManager && (
+                            <button 
+                                onClick={() => handleToggleActive(product)}
+                                className="p-2 text-green-600 hover:bg-green-50 rounded transition-colors"
+                                title="Restaurar Produto"
+                            >
+                                <Undo2 size={18} />
+                            </button>
+                        )}
+
+                        {isManager && (
+                          <div className="relative">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === product.id ? null : product.id) }}
+                              className="p-2 hover:bg-slate-200 rounded text-slate-500"
+                            >
+                              <MoreHorizontal size={18} />
+                            </button>
+
+                            {menuOpenId === product.id && (
+                              <div className="absolute right-0 top-10 w-48 bg-white shadow-xl rounded-lg border border-slate-100 z-50 overflow-hidden">
+                                
+                                {/* Editar (Apenas Ativos) */}
+                                {product.active && (
+                                    <button onClick={() => { setProductToEdit(product); setIsProductModalOpen(true) }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center">
+                                    <Pencil size={14} className="mr-2"/> Editar
+                                    </button>
+                                )}
+
+                                {/* Botão Contextual: Arquivar ou Restaurar */}
+                                <button 
+                                    onClick={() => handleToggleActive(product)} 
+                                    className={`w-full text-left px-4 py-2 text-sm flex items-center border-t border-slate-50 ${product.active ? 'text-red-600 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'}`}
+                                >
+                                  {product.active ? (
+                                      <>
+                                        <Archive size={14} className="mr-2"/> Arquivar
+                                      </>
+                                  ) : (
+                                      <>
+                                        <Undo2 size={14} className="mr-2"/> Restaurar
+                                      </>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+        </div>
       </div>
 
       {isProductModalOpen && <NewProductModal onClose={() => setIsProductModalOpen(false)} onSave={handleSaveProduct} productToEdit={productToEdit} />}

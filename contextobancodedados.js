@@ -69,7 +69,8 @@
         "id (bigint)",
         "name (text)",
         "cnpj (text)",
-        "created_at (timestamp with time zone)"
+        "created_at (timestamp with time zone)",
+        "status (text)"
       ]
     }
   },
@@ -142,6 +143,16 @@
         "access_pin (text)",
         "company_id (bigint)",
         "auth_user_id (uuid)"
+      ]
+    }
+  },
+  {
+    "estrutura_banco": {
+      "tabela": "employees_security_cache",
+      "colunas": [
+        "auth_user_id (uuid)",
+        "company_id (bigint)",
+        "role (text)"
       ]
     }
   },

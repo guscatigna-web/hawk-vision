@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-// ADICIONADO: PlusCircle na lista de imports abaixo
 import { Utensils, Loader2, DollarSign, Clock, CheckCircle, ArrowRightLeft, X, Check, Users, CalendarClock, PlusCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PrinterService } from '../services/printer'
@@ -87,7 +86,7 @@ export function Mesas() {
     else navigate(`/vendas?mesa=${tableNumber}`)
   }
 
-  // --- AÇÕES ---
+  // --- AÇÕES (Lógica original preservada) ---
   const toggleReservation = async (e, tableNumber, existingSale) => {
     e.stopPropagation() 
     if (!currentCompanyId) return toast.error("Erro: Empresa não identificada.")
@@ -193,24 +192,31 @@ export function Mesas() {
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-600"/></div>
 
   return (
-    <div className="space-y-6 animate-fade-in pb-20">
+    // ADICIONADO: pb-24 md:pb-8 para garantir espaço da bottom bar mobile
+    <div className="space-y-4 md:space-y-6 animate-fade-in pb-24 md:pb-8">
       
-      <div className="flex justify-between items-center">
+      {/* HEADER RESPONSIVO */}
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-            <h2 className="text-2xl font-bold text-slate-800">Gestão de Mesas</h2>
-            <p className="text-sm text-slate-500">Acompanhamento em tempo real.</p>
+            <h2 className="text-xl md:text-2xl font-bold text-slate-800">Gestão de Mesas</h2>
+            <p className="text-xs md:text-sm text-slate-500">Acompanhamento em tempo real.</p>
         </div>
-        <div className="flex gap-3">
-            <button onClick={handleNewTable} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-200 active:scale-95 transition-all">
-                <PlusCircle size={20}/> Abrir Mesa
+        {/* Botões Full Width no Mobile */}
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+            <button 
+                onClick={handleNewTable} 
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 md:py-2 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-200 active:scale-95 transition-all w-full md:w-auto"
+            >
+                <PlusCircle size={20}/> <span>Abrir Mesa</span>
             </button>
-            <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm text-sm font-bold text-slate-600 flex items-center">
+            <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm text-sm font-bold text-slate-600 flex items-center justify-center w-full md:w-auto">
                 {openSales.filter(s => s.status !== 'reservada').length} Abertas
             </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+      {/* GRID RESPONSIVO: 2 colunas no mobile, crescendo gradualmente */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-6">
         {displayTables.map(num => {
           const sale = openSales.find(s => s.table_number === num)
           const isReserved = sale?.status === 'reservada'
@@ -221,7 +227,8 @@ export function Mesas() {
             <button
               key={num}
               onClick={() => handleTableClick(num)}
-              className={`relative h-40 rounded-2xl border-2 flex flex-col items-center justify-center transition-all shadow-sm hover:shadow-md hover:-translate-y-1 active:scale-95 
+              // Ajuste de altura e padding para mobile
+              className={`relative h-36 md:h-40 rounded-xl md:rounded-2xl border-2 flex flex-col items-center justify-center transition-all shadow-sm hover:shadow-md hover:-translate-y-1 active:scale-95 
                 ${isReserved 
                     ? 'bg-amber-50 border-amber-300 text-amber-700' 
                     : isOccupied 
@@ -239,27 +246,27 @@ export function Mesas() {
                 <CalendarClock size={18} />
               </div>
 
-              <span className={`text-2xl font-bold mb-2 ${isOccupied ? 'text-slate-800' : isReserved ? 'text-amber-800' : 'text-slate-300'}`}>{num}</span>
+              <span className={`text-2xl md:text-3xl font-bold mb-1 md:mb-2 ${isOccupied ? 'text-slate-800' : isReserved ? 'text-amber-800' : 'text-slate-300'}`}>{num}</span>
               
-              {isReserved ? <span className="text-xs font-bold uppercase tracking-widest bg-amber-200/50 px-2 py-1 rounded">Reservada</span> 
+              {isReserved ? <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest bg-amber-200/50 px-2 py-1 rounded">Reservada</span> 
                 : isReady ? <CheckCircle size={28} /> 
-                : <Utensils size={isOccupied ? 28 : 32} className={isOccupied ? 'opacity-80' : 'opacity-20'} />}
+                : <Utensils size={isOccupied ? 24 : 32} className={isOccupied ? 'opacity-80' : 'opacity-20'} />}
 
               {isOccupied && (
-                <div className="mt-3 text-center w-full px-2">
-                  <div className="bg-white/80 rounded-lg py-1 px-2 mb-1 flex items-center justify-center gap-1 text-sm font-bold text-slate-800 shadow-sm">
+                <div className="mt-2 md:mt-3 text-center w-full px-1 md:px-2">
+                  <div className="bg-white/80 rounded-lg py-1 px-2 mb-1 flex items-center justify-center gap-1 text-xs md:text-sm font-bold text-slate-800 shadow-sm">
                     <DollarSign size={12}/> {sale.total.toFixed(2)}
                   </div>
                   <div className="flex items-center justify-center gap-1 text-[10px] font-medium opacity-70">
                     <Clock size={10} /> {getDuration(sale.created_at)}
                   </div>
                   {sale.people_count > 1 && (
-                      <div className="absolute top-2 left-2 flex items-center gap-0.5 text-xs font-bold text-slate-500 bg-white/50 px-1.5 rounded-full"><Users size={10}/> {sale.people_count}</div>
+                      <div className="absolute top-2 left-2 flex items-center gap-0.5 text-[10px] md:text-xs font-bold text-slate-500 bg-white/50 px-1.5 rounded-full"><Users size={10}/> {sale.people_count}</div>
                   )}
                 </div>
               )}
               
-              {!isOccupied && !isReserved && <span className="absolute bottom-4 text-xs font-medium uppercase tracking-wider opacity-60">Livre</span>}
+              {!isOccupied && !isReserved && <span className="absolute bottom-4 text-[10px] md:text-xs font-medium uppercase tracking-wider opacity-60">Livre</span>}
             </button>
           )
         })}
@@ -278,8 +285,14 @@ export function Mesas() {
         />
       )}
 
+      {/* Mantive o modal original que você enviou */}
       {isTransferModalOpen && selectedTableSale && (
-        <TransferModal sourceSale={selectedTableSale} onClose={() => setIsTransferModalOpen(false)} onConfirm={(data) => { setPendingAction({ type: 'transfer', data }); setAuthModalOpen(true); }} tables={displayTables} />
+        <TransferModal 
+            sourceSale={selectedTableSale} 
+            onClose={() => setIsTransferModalOpen(false)} 
+            onConfirm={(data) => { setPendingAction({ type: 'transfer', data }); setAuthModalOpen(true); }} 
+            tables={displayTables} 
+        />
       )}
 
       <AuthModal isOpen={authModalOpen} onClose={() => { setAuthModalOpen(false); setPendingAction(null) }} onSuccess={executeProtectedAction} title="Autorizar Ação" message="Esta ação exige senha de gerente." />

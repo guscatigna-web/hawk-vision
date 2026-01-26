@@ -21,6 +21,10 @@ export function NewProductModal({ onClose, onSave, productToEdit }) {
   const [isCreatingStock, setIsCreatingStock] = useState(false)
   const [newStockName, setNewStockName] = useState('')
 
+  // NOVO: Controle de Criação Inline - Grupo Financeiro
+  const [isCreatingFinancial, setIsCreatingFinancial] = useState(false)
+  const [newFinancialName, setNewFinancialName] = useState('')
+
   const [formData, setFormData] = useState({
     name: '',
     barcode: '',
@@ -90,6 +94,7 @@ export function NewProductModal({ onClose, onSave, productToEdit }) {
     try {
       let finalCategoryId = formData.category_id === '' ? null : formData.category_id
       let finalStockCategory = formData.stock_category
+      let finalFinancialGroup = formData.financial_group
 
       // Lógica de Criação Inline (PDV e Estoque)
       if (isCreatingPDV && newPDVName.trim()) {
@@ -104,10 +109,18 @@ export function NewProductModal({ onClose, onSave, productToEdit }) {
         if (error && error.code !== '23505') console.error(error) 
       }
 
+      // NOVO: Lógica de Criação Inline (Grupo Financeiro)
+      if (isCreatingFinancial && newFinancialName.trim()) {
+        finalFinancialGroup = newFinancialName.trim()
+        const { error } = await supabase.from('financial_groups_list').insert({ name: finalFinancialGroup }).select()
+        if (error && error.code !== '23505') console.error(error)
+      }
+
       const payload = {
         ...formData,
         category_id: finalCategoryId,
         stock_category: finalStockCategory,
+        financial_group: finalFinancialGroup,
         price: parseFloat(formData.price || 0),
         cost_price: parseFloat(formData.cost_price || 0),
         stock_quantity: parseFloat(formData.stock_quantity || 0),
@@ -230,13 +243,23 @@ export function NewProductModal({ onClose, onSave, productToEdit }) {
                 )}
               </div>
 
-              {/* FINANCEIRO */}
+              {/* FINANCEIRO - COM FUNCIONALIDADE ADICIONADA */}
               <div className="bg-white p-3 rounded-lg border border-slate-200 flex flex-col justify-between">
                 <label className="label flex items-center gap-1 text-slate-700"><PieChart size={14}/> Grupo Financeiro</label>
-                <select name="financial_group" value={formData.financial_group} onChange={handleChange} className="input-base text-sm">
-                  <option value="">Selecione...</option>
-                  {financialGroups.map(group => <option key={group.id} value={group.name}>{group.name}</option>)}
-                </select>
+                {isCreatingFinancial ? (
+                  <div className="flex gap-2 animate-fade-in">
+                    <input autoFocus value={newFinancialName} onChange={e => setNewFinancialName(e.target.value)} placeholder="Novo..." className="input-base text-sm py-2 px-2" />
+                    <button type="button" onClick={() => setIsCreatingFinancial(false)} className="p-2 bg-slate-100 rounded"><RotateCcw size={18}/></button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <select name="financial_group" value={formData.financial_group} onChange={handleChange} className="input-base text-sm py-2 px-2">
+                      <option value="">Selecione...</option>
+                      {financialGroups.map(group => <option key={group.id} value={group.name}>{group.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setIsCreatingFinancial(true)} className="p-2 bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100"><Plus size={18}/></button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -270,7 +293,7 @@ export function NewProductModal({ onClose, onSave, productToEdit }) {
               )}
             </div>
 
-            {/* ESTOQUE CHECKBOX */}
+            {/* ESTOQUE CHECKBOX - PRESERVADO */}
             {formData.type !== 'servico' && (
               <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
                 <div className="flex items-center mb-3">
