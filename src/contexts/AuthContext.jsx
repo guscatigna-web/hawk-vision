@@ -10,6 +10,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // Dados do Supabase Auth (email, id, etc)
   const [employee, setEmployee] = useState(null); // Dados de negócio (nome, cargo, company_id)
   const [loading, setLoading] = useState(true);
+  
+  // NOVO: Estado para armazenar o usuário Master original quando estiver acessando outra loja
+  const [originalMasterUser, setOriginalMasterUser] = useState(null);
 
   useEffect(() => {
     // 1. Verifica sessão ativa ao abrir o app
@@ -32,6 +35,7 @@ export function AuthProvider({ children }) {
         fetchEmployeeProfile(session.user);
       } else {
         setEmployee(null);
+        setOriginalMasterUser(null);
         setLoading(false);
       }
     });
@@ -39,61 +43,49 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- BUSCA PERFIL DE NEGÓCIO (Com Vínculo Automático) ---
   async function fetchEmployeeProfile(authUser) {
     try {
-      // Tenta buscar pelo ID de autenticação já vinculado
-      let { data, error } = await supabase
+      const { data, error } = await supabase
         .from('employees')
         .select('*')
         .eq('auth_user_id', authUser.id)
-        .maybeSingle();
+        .single();
 
-      // MIGRACAO AUTOMÁTICA:
-      // Se não achou pelo ID, mas o email bate, vamos vincular agora!
-      if (!data && authUser.email) {
-        const { data: emailMatch } = await supabase
-          .from('employees')
-          .select('*')
-          .eq('email', authUser.email)
-          .maybeSingle();
+      if (error) {
+        // Se não achar funcionário, pode ser o primeiro login ou erro
+        console.error('Perfil de funcionário não encontrado:', error);
+      }
 
-        if (emailMatch) {
-          // Atualiza o registro do funcionário com o ID do Supabase Auth
-          const { data: updated, error: updateError } = await supabase
-            .from('employees')
-            .update({ auth_user_id: authUser.id })
-            .eq('id', emailMatch.id)
-            .select()
-            .single();
+      // --- LÓGICA DE IMPERSONATION (ACESSO MASTER) ---
+      // Verifica se existe um acesso "mascarado" salvo no navegador
+      const storedImpersonation = localStorage.getItem('hawk_impersonation');
+      
+      if (storedImpersonation && data?.role === 'Master') {
+          const targetCompany = JSON.parse(storedImpersonation);
           
-          if (!updateError) {
-            data = updated;
-            console.log("Vínculo de usuário realizado com sucesso para:", authUser.email);
+          // Salva os dados reais do Master
+          setOriginalMasterUser(data);
+          
+          // Define o funcionário "falso" com os dados da loja alvo
+          setEmployee({
+              ...data, // Mantém nome/email do Master
+              company_id: targetCompany.id, // Injeta ID da loja cliente
+              company_name: targetCompany.name,
+              role: 'Gerente', // Rebaixa para Gerente para ver o painel da loja
+              is_impersonating: true
+          });
+          console.log(`🔒 Modo Master: Acessando ${targetCompany.name}`);
+      } else {
+          // Vida normal
+          setEmployee(data);
+          // Se não estiver impersonando, garante que limpa sujeira antiga
+          if (data?.role === 'Master') {
+             setOriginalMasterUser(null);
           }
-        }
       }
 
-      if (error && error.code !== 'PGRST116') throw error;
-
-      if (!data) {
-        // Logou no Supabase, mas não é um funcionário cadastrado
-        console.error("Usuário sem cadastro de funcionário correspondente.");
-        await supabase.auth.signOut();
-        toast.error("Usuário não vinculado a um funcionário.");
-        return;
-      }
-
-      if (data.status !== 'Ativo') {
-        await supabase.auth.signOut();
-        toast.error("Acesso revogado.");
-        return;
-      }
-
-      setEmployee(data);
-    
     } catch (error) {
-      console.error("Erro ao carregar perfil:", error);
+      console.error('Erro ao buscar perfil:', error);
     } finally {
       setLoading(false);
     }
@@ -128,15 +120,51 @@ export function AuthProvider({ children }) {
   // --- LOGOUT ---
   async function signOut() {
     try {
+      // Limpa qualquer impersonation ao sair
+      localStorage.removeItem('hawk_impersonation');
+      
       await supabase.auth.signOut();
       setEmployee(null);
       setUser(null);
       setSession(null);
+      setOriginalMasterUser(null);
       toast.success("Saiu do sistema.");
     } catch (error) {
       console.error("Erro ao sair:", error);
     }
   }
+
+  // --- FUNÇÕES DE MASTER (NOVO) ---
+  
+  const impersonateCompany = async (targetCompany) => {
+    if (employee?.role !== 'Master' && !originalMasterUser) {
+        toast.error('Permissão negada.');
+        return;
+    }
+
+    // Salva no Storage para persistir após reload
+    localStorage.setItem('hawk_impersonation', JSON.stringify({
+        id: targetCompany.id,
+        name: targetCompany.name
+    }));
+
+    toast.loading(`Acessando ${targetCompany.name}...`);
+    
+    // Força um reload para garantir que todos os componentes (Querys, Contextos)
+    // peguem o novo company_id limpo desde o início.
+    setTimeout(() => {
+        window.location.href = '/'; 
+    }, 500);
+  };
+
+  const exitImpersonation = () => {
+    localStorage.removeItem('hawk_impersonation');
+    toast.loading('Voltando para o QG...');
+    
+    setTimeout(() => {
+        window.location.href = '/master-dashboard';
+    }, 500);
+  };
 
   // O "user" exportado agora combina dados de Auth + Dados de Funcionário para compatibilidade
   const combinedUser = employee ? { ...employee, auth_id: user?.id } : null;
@@ -144,13 +172,23 @@ export function AuthProvider({ children }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-50">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div>
       </div>
     );
   }
 
   return (
-    <AuthContext.Provider value={{ user: combinedUser, signIn, signOut, loading, session }}>
+    <AuthContext.Provider value={{ 
+        session, 
+        user: combinedUser, 
+        loading, 
+        signIn, 
+        signOut,
+        // Novos exports para Master
+        impersonateCompany,
+        exitImpersonation,
+        isImpersonating: !!originalMasterUser
+    }}>
       {children}
     </AuthContext.Provider>
   );

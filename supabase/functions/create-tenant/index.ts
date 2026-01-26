@@ -9,40 +9,55 @@ const corsHeaders = {
 }
 
 serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  // Tratamento de Preflight (CORS)
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
 
   try {
-    // 1. Cliente Admin (Poder Supremo)
+    // 1. CONFIGURAÇÃO DO CLIENTE ADMIN (Service Role)
+    // Tenta pegar a chave padrão do Supabase OU a chave personalizada antiga
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_KEY') ?? ''
+
+    if (!serviceRoleKey) {
+        throw new Error('Configuração Crítica: SERVICE_ROLE_KEY não encontrada nas variáveis de ambiente.')
+    }
+
     // @ts-ignore
     const supabaseAdmin = createClient(
       // @ts-ignore
       Deno.env.get('SUPABASE_URL') ?? '',
-      // @ts-ignore
-      Deno.env.get('SERVICE_ROLE_KEY') ?? ''
+      serviceRoleKey
     )
 
-    // 2. Recebe os dados do NOVO CLIENTE
+    // 2. RECEBER DADOS DO FRONTEND
     const { restaurantName, ownerName, email, password } = await req.json()
 
     if (!restaurantName || !ownerName || !email || !password) {
       throw new Error('Faltam dados: Nome do Restaurante, Nome do Dono, Email ou Senha.')
     }
 
-    console.log(`Iniciando criação do tenant: ${restaurantName}`)
+    console.log(`🚀 Iniciando criação do tenant: ${restaurantName}`)
 
     // 3. PASSO 1: Criar a EMPRESA (Company)
+    // Agora que rodamos o SQL, a coluna 'status' existe e isso vai funcionar
     const { data: company, error: companyError } = await supabaseAdmin
       .from('companies')
-      .insert({ name: restaurantName })
+      .insert({ 
+          name: restaurantName,
+          status: 'active' 
+      })
       .select()
       .single()
 
-    if (companyError) throw new Error(`Erro ao criar empresa: ${companyError.message}`)
+    if (companyError) {
+        throw new Error(`Erro ao criar empresa (DB): ${companyError.message}`)
+    }
     
     const newCompanyId = company.id
-    console.log(`Empresa criada com ID: ${newCompanyId}`)
+    console.log(`✅ Empresa criada com ID: ${newCompanyId}`)
 
-    // 4. PASSO 2: Criar o USUÁRIO MASTER no Auth
+    // 4. PASSO 2: Criar o USUÁRIO MASTER no Auth (Supabase Auth)
     const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email,
       password: password,
@@ -51,45 +66,91 @@ serve(async (req: Request) => {
     })
 
     if (authError) {
-      // Se falhar o Auth, deletamos a empresa criada para não ficar "lixo" no banco
+      // Rollback: Se falhar o Auth, deletamos a empresa para não deixar lixo
       await supabaseAdmin.from('companies').delete().eq('id', newCompanyId)
       throw new Error(`Erro ao criar usuário Auth: ${authError.message}`)
     }
 
-    // 5. PASSO 3: Criar o PERFIL DE FUNCIONÁRIO (O Dono) vinculado à Empresa
+    console.log(`✅ Usuário Auth criado: ${authUser.user.id}`)
+
+    // 5. PASSO 3: Criar o PERFIL DE FUNCIONÁRIO (O Dono) na tabela 'employees'
     const { error: employeeError } = await supabaseAdmin
       .from('employees')
       .insert({
-        company_id: newCompanyId, // <--- AQUI ESTÁ O SEGREDO! O vínculo nasce aqui.
+        company_id: newCompanyId, 
         auth_user_id: authUser.user.id,
         name: ownerName,
         email: email,
-        role: 'Gerente', // O dono nasce como Gerente
+        role: 'Gerente', // O dono da loja é Gerente
         status: 'Ativo',
-        access_pin: '1234' // Pin padrão inicial
+        access_pin: '1234' // Pin padrão
       })
 
     if (employeeError) {
-      // Se falhar aqui, deletamos o Auth e a Empresa (Rollback manual)
+      // Rollback Complexo: Deleta Auth e Empresa
       await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
       await supabaseAdmin.from('companies').delete().eq('id', newCompanyId)
       throw new Error(`Erro ao criar perfil do dono: ${employeeError.message}`)
     }
 
-    // 6. (Opcional) Criar configurações padrão para a nova empresa
-    // Ex: Criar uma 'company_settings' vazia para não dar erro 404 depois
-    await supabaseAdmin.from('company_settings').insert({ company_id: newCompanyId })
+    // --- SEEDING (Popular dados iniciais) ---
+    console.log(`🌱 Iniciando população de dados padrão...`)
+
+    // 6. Configurações Iniciais (Settings)
+    const settingsPromise = supabaseAdmin.from('company_settings').insert({
+        company_id: newCompanyId,
+        company_name: restaurantName,
+        print_mode: 'browser'
+    })
+
+    // 7. Formas de Pagamento Padrão
+    const paymentsPromise = supabaseAdmin.from('payment_methods').insert([
+        { company_id: newCompanyId, name: 'Dinheiro', active: true },
+        { company_id: newCompanyId, name: 'Cartão de Crédito', active: true },
+        { company_id: newCompanyId, name: 'Cartão de Débito', active: true },
+        { company_id: newCompanyId, name: 'PIX', active: true }
+    ])
+
+    // 8. Categorias Iniciais
+    const categoriesPromise = supabaseAdmin.from('categories').insert([
+        { company_id: newCompanyId, name: 'Geral', type: 'product' },
+        { company_id: newCompanyId, name: 'Bebidas', type: 'product' },
+        { company_id: newCompanyId, name: 'Comidas', type: 'product' }
+    ])
+
+    // 9. Inicialização Fiscal (Config vazia e Sequência zerada)
+    const fiscalConfigPromise = supabaseAdmin.from('fiscal_config').insert({
+        company_id: newCompanyId,
+        environment: 'homologacao'
+    })
+
+    const fiscalSequencePromise = supabaseAdmin.from('fiscal_sequences').insert([
+        { company_id: newCompanyId, environment: 'homologacao', serie: 1, last_number: 0 },
+        { company_id: newCompanyId, environment: 'producao', serie: 1, last_number: 0 }
+    ])
+
+    // Executa tudo em paralelo
+    await Promise.all([
+        settingsPromise,
+        paymentsPromise,
+        categoriesPromise,
+        fiscalConfigPromise,
+        fiscalSequencePromise
+    ])
+
+    console.log(`🎉 Tenant ${restaurantName} configurado com sucesso!`)
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `Cliente ${restaurantName} criado com sucesso!`,
+        message: `Cliente ${restaurantName} criado e configurado com sucesso!`,
         data: { companyId: newCompanyId, email: email }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
 
   } catch (error: any) {
+    console.error("Erro fatal no create-tenant:", error)
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }

@@ -2,12 +2,7 @@ import { useState } from 'react'
 import { Shield, Building2, User, Mail, Lock, Zap, CheckCircle, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { Navigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-
-// 🔒 SEGURANÇA: Coloque aqui o SEU e-mail de Super Admin
-// Apenas este e-mail terá permissão para ver esta tela.
-const MASTER_EMAIL = 'master@hawk.com' // <--- ALTERE AQUI
 
 export function SuperAdmin() {
   const { user, loading } = useAuth()
@@ -26,13 +21,13 @@ export function SuperAdmin() {
   if (loading) return <div className="h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div></div>
 
   // 2. Proteção de Rota (Acesso Negado)
-  // Se não estiver logado ou o e-mail não for o Mestre, chuta para fora.
-  if (!user || user.email !== MASTER_EMAIL) {
+  // CORREÇÃO: Agora verificamos a Role 'Master' vinda do banco, em vez de um e-mail fixo.
+  if (!user || user.role !== 'Master') {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 gap-4">
         <Shield size={64} className="text-slate-300" />
         <h1 className="text-2xl font-bold text-slate-800">Acesso Restrito</h1>
-        <p>Esta área é exclusiva para administração do Hawk Vision.</p>
+        <p>Esta área é exclusiva para Super Administradores (Master).</p>
         <a href="/" className="text-blue-600 hover:underline">Voltar ao Sistema</a>
       </div>
     )

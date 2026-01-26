@@ -8,7 +8,8 @@ import { CashierProvider } from './contexts/CashierContext'
 // Layouts e Páginas
 import { AppLayout } from './layouts/AppLayout'
 import { Login } from './pages/Login'
-import { SuperAdmin } from './pages/SuperAdmin' // Página Secreta
+import { MasterDashboard } from './pages/MasterDashboard'
+import { SuperAdmin } from './pages/SuperAdmin'
 
 import Pedidos from './pages/Pedidos'
 import Dashboard from './pages/Dashboard'
@@ -26,7 +27,6 @@ import { Bar } from './pages/Bar'
 import IfoodMenu from './pages/IfoodMenu';
 import IfoodConfig from './pages/IfoodConfig';
 import CardapioIfood from './pages/CardapioIfood';
-import MasterDashboard from './pages/MasterDashboard';
 
 export default function App() {
   return (
@@ -39,9 +39,6 @@ export default function App() {
           <Routes>
             {/* Rota Pública */}
             <Route path="/login" element={<Login />} />
-            
-            {/* Rota Secreta (Criação de Clientes) */}
-            <Route path="/master-admin" element={<SuperAdmin />} />
 
             {/* Rotas Protegidas (Layout Principal com Menu) */}
             <Route path="/" element={<AppLayout />}>
@@ -54,7 +51,8 @@ export default function App() {
               <Route path="relatorios" element={<Relatorios />} />
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="configuracoes" element={<Configuracoes />} />
-              <Route path="masterdashboard" element={<MasterDashboard />} />
+              <Route path="/master-dashboard" element={<MasterDashboard />} />
+              <Route path="/super-admin" element={<SuperAdmin />} />
               
               {/* Rotas iFood */}
               <Route path="/config/ifood" element={<IfoodConfig />} />

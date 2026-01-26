@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Filter, MoreHorizontal, UserPlus, Loader2, Edit, Trash2 } from 'lucide-react'
+import { Search, Filter, MoreHorizontal, UserPlus, Loader2, Edit, Trash2, ShieldCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { createClient } from '@supabase/supabase-js' 
 import { NewEmployeeModal } from '../components/NewEmployeeModal'
+import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 
 export function Equipe() {
   const navigate = useNavigate()
+  const { user } = useAuth() 
+  
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -17,13 +20,48 @@ export function Equipe() {
   
   const [menuOpenId, setMenuOpenId] = useState(null)
 
-  // 1. Busca Funcionários
-  async function fetchEmployees() {
+  // --- FUNÇÃO DE DIAGNÓSTICO (BOTÃO DE TESTE) ---
+  async function handleDebugRLS() {
+    const loadingToast = toast.loading('Rodando diagnóstico de segurança...')
+    try {
+      // Chama a função RPC que criamos no banco
+      const { data, error } = await supabase.rpc('debug_rls_check')
+      
+      toast.dismiss(loadingToast)
+
+      if (error) throw error
+
+      const resultado = data[0] // Pega o primeiro resultado
+
+      console.log("RESULTADO DO DIAGNÓSTICO:", resultado)
+
+      if (resultado && resultado.status.includes('✅')) {
+        toast.success("TESTE APROVADO! O Cache está funcionando.", { duration: 5000 })
+        alert(`✅ SUCESSO!\n\nStatus: ${resultado.status}\nCache OK: ${resultado.tem_no_cache}\nMaster: ${resultado.eh_master_cache}\n\nPODEMOS LIGAR O RLS AGORA!`)
+      } else {
+        toast.error("FALHA NO TESTE. Veja o alerta.", { duration: 5000 })
+        alert(`❌ FALHA!\n\nStatus: ${resultado?.status || 'Sem retorno'}\n\nNÃO LIGUE O RLS AINDA.`)
+      }
+
+    } catch (error) {
+      toast.dismiss(loadingToast)
+      console.error('Erro no diagnóstico:', error)
+      toast.error('Erro ao chamar a função de teste: ' + error.message)
+    }
+  }
+  // ------------------------------------------------
+
+  // 1. Busca Funcionários (Com useCallback para evitar loop/aviso)
+  const fetchEmployees = useCallback(async () => {
+    // Se não tiver company_id carregado ainda, não busca nada para evitar erro 400
+    if (!user?.company_id) return
+
     setLoading(true)
     try {
       const { data, error } = await supabase
         .from('employees')
         .select('*')
+        .eq('company_id', user.company_id) 
         .order('name')
       
       if (error) throw error
@@ -34,11 +72,11 @@ export function Equipe() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [user?.company_id]) // Só recria a função se a empresa mudar
 
   useEffect(() => {
     fetchEmployees()
-  }, [])
+  }, [fetchEmployees]) // Agora o React fica feliz e seguro
 
   // 2. Função Inteligente de Salvamento
   async function handleSaveEmployee(formData) {
@@ -67,13 +105,11 @@ export function Equipe() {
            throw new Error("Email e Senha são obrigatórios para novos funcionários.")
         }
 
-        // Cliente temporário para não deslogar o Admin
         const supabaseTemp = createClient(
           import.meta.env.VITE_SUPABASE_URL,
           import.meta.env.VITE_SUPABASE_ANON_KEY
         )
 
-        // Criar Usuário no Auth
         const { data: authData, error: authError } = await supabaseTemp.auth.signUp({
           email: formData.email,
           password: formData.password,
@@ -85,23 +121,11 @@ export function Equipe() {
         if (authError) throw authError
         if (!authData.user) throw new Error("Erro ao gerar ID de autenticação.")
 
-        // Pegar a empresa do Admin logado
-        const { data: { user: adminUser } } = await supabase.auth.getUser()
-        
-        const { data: adminEmployee } = await supabase
-            .from('employees')
-            .select('company_id')
-            .eq('auth_user_id', adminUser.id)
-            .single()
-            
-        const targetCompanyId = adminEmployee?.company_id || 1
-
-        // Inserir na tabela employees com o UUID correto
         const { error: dbError } = await supabase
           .from('employees')
           .insert({
             auth_user_id: authData.user.id,
-            company_id: targetCompanyId,
+            company_id: user.company_id, 
             name: formData.name,
             email: formData.email,
             password: formData.password,
@@ -114,7 +138,10 @@ export function Equipe() {
           })
 
         if (dbError) {
-          console.error("Erro no banco, usuário Auth criado orfão:", authData.user.id)
+          if (dbError.code === '23505') {
+             throw new Error("Este e-mail já está cadastrado como funcionário.")
+          }
+          console.error("Erro no banco:", dbError)
           throw dbError
         }
 
@@ -149,15 +176,23 @@ export function Equipe() {
       toast.success('Funcionário removido')
       fetchEmployees()
     } catch (error) {
-      console.error(error) // <--- Correção do 'unused variable'
-      toast.error('Erro ao excluir')
+      console.error(error)
+      toast.error('Erro ao excluir (Pode ser protegido pelo sistema)')
     }
   }
 
-  const filteredEmployees = employees.filter(emp => 
-    emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.role.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // --- FILTRAGEM ---
+  const filteredEmployees = employees.filter(emp => {
+    // 1. Oculta Master (Sempre)
+    if (emp.role === 'Master') return false;
+    
+    // 2. Filtro de Busca
+    const matchesSearch = 
+      emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.role.toLowerCase().includes(searchTerm.toLowerCase());
+      
+    return matchesSearch;
+  })
 
   return (
     <div className="space-y-6">
@@ -166,13 +201,25 @@ export function Equipe() {
           <h1 className="text-2xl font-bold text-slate-800">Equipe</h1>
           <p className="text-slate-500">Gerencie seus colaboradores</p>
         </div>
-        <button 
-          onClick={() => { setEmployeeToEdit(null); setIsModalOpen(true); }}
-          className="bg-slate-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-800 transition-colors"
-        >
-          <UserPlus size={20} />
-          Novo Colaborador
-        </button>
+        
+        <div className="flex gap-2">
+            {/* BOTÃO DE DIAGNÓSTICO TEMPORÁRIO */}
+            <button 
+            onClick={handleDebugRLS}
+            className="bg-amber-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-amber-600 transition-colors font-bold shadow-lg shadow-amber-500/20"
+            >
+            <ShieldCheck size={20} />
+            TESTAR RLS
+            </button>
+
+            <button 
+            onClick={() => { setEmployeeToEdit(null); setIsModalOpen(true); }}
+            className="bg-slate-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-800 transition-colors"
+            >
+            <UserPlus size={20} />
+            Novo Colaborador
+            </button>
+        </div>
       </div>
 
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex gap-4">
@@ -253,10 +300,6 @@ export function Equipe() {
         </div>
       )}
 
-      {/* CORREÇÃO IMPORTANTE: key={employeeToEdit?.id || 'new'}
-         Isso força o componente a reiniciar o estado quando muda o funcionário,
-         eliminando a necessidade do useEffect problemático no filho.
-      */}
       <NewEmployeeModal 
         key={employeeToEdit ? employeeToEdit.id : 'new'}
         isOpen={isModalOpen}

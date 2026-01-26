@@ -15,7 +15,8 @@ import {
   Crown, 
   LayoutGrid, 
   UtensilsCrossed,
-  BarChart3 // Novo ícone para Relatórios
+  BarChart3,
+  Undo2 // Ícone para voltar
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -25,11 +26,15 @@ import { IfoodSimulator } from '../components/IfoodSimulator'
 import { IfoodPolling } from '../components/IfoodPolling'
 
 export function AppLayout() {
-  const { user, signOut } = useAuth();
+  // 1. Extraímos as novas funções do Contexto (Passo 3)
+  const { user, signOut, isImpersonating, exitImpersonation } = useAuth();
   const [pendingCount, setPendingCount] = useState(0)
 
   // Permissões: Gerente e Master veem o menu completo
+  // Nota: Durante o acesso remoto, seu role será 'Gerente', então você verá o menu da loja normalmente.
   const isManager = user?.role === 'Gerente' || user?.role === 'Master';
+  
+  // Nota: isMaster será FALSE durante o acesso remoto (o que esconde o menu Admin automaticamente)
   const isMaster = user?.role === 'Master';
 
   // Verifica notificações/pendências (Polling)
@@ -53,21 +58,46 @@ export function AppLayout() {
   return (
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col print:hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col print:hidden transition-all duration-300">
+        <div className={`p-4 border-b ${isImpersonating ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800'} flex items-center justify-between transition-colors`}>
           <div>
-            <h1 className="text-white font-bold text-lg">Hawk Vision</h1>
-            <p className="text-xs text-slate-500">Sistema de Gestão</p>
+            <h1 className={`font-bold text-lg ${isImpersonating ? 'text-amber-400' : 'text-white'}`}>
+              {isImpersonating ? 'MODO ESPIÃO' : 'Hawk Vision'}
+            </h1>
+            <p className="text-xs text-slate-500">
+              {isImpersonating ? 'Acesso Remoto' : 'Sistema de Gestão'}
+            </p>
           </div>
           {/* Badge do Usuário */}
           <div className="flex flex-col items-end">
-             <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase border ${isMaster ? 'text-amber-400 border-amber-400' : 'text-slate-400 border-slate-600'}`}>
+             <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase border ${isMaster || isImpersonating ? 'text-amber-400 border-amber-400' : 'text-slate-400 border-slate-600'}`}>
                 {user.role || '...'}
              </span>
           </div>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
+            
+            {/* --- BLOCO EXCLUSIVO: BOTÃO DE SAÍDA DO MODO MASTER --- */}
+            {/* Só aparece se você estiver acessando a loja de um cliente */}
+            {isImpersonating && (
+                <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/50 rounded-xl mx-1 animate-fade-in">
+                    <p className="text-[10px] text-amber-400 font-bold mb-2 text-center uppercase tracking-wider flex items-center justify-center gap-1">
+                        <Crown size={12} /> Você é Master
+                    </p>
+                    <p className="text-xs text-slate-400 text-center mb-3">
+                        Vendo loja: <br/> <strong className="text-white">{user.company_name}</strong>
+                    </p>
+                    <button 
+                        onClick={exitImpersonation}
+                        className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold py-2.5 rounded-lg text-sm transition-all shadow-lg shadow-amber-900/20 active:scale-95"
+                    >
+                        <Undo2 size={16} /> Sair da Loja
+                    </button>
+                </div>
+            )}
+            {/* ------------------------------------------------------- */}
+
             {/* MENU PRINCIPAL */}
             {isManager && (
               <>
@@ -75,7 +105,7 @@ export function AppLayout() {
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 pl-2">Gestão</p>
                   <NavItem to="/" icon={<LayoutDashboard size={20}/>} label="Dashboard" />
                   
-                  {/* NOVO ITEM: RELATÓRIOS */}
+                  {/* Item: Relatórios */}
                   <NavItem to="/relatorios" icon={<BarChart3 size={20}/>} label="Relatórios & Logs" />
 
                   <NavItem to="/vendas" icon={<ShoppingCart size={20}/>} label="Vendas / PDV" />
@@ -96,11 +126,13 @@ export function AppLayout() {
                   <NavItem to="/notificacoes" icon={<Bell size={20}/>} label={`Notificações ${pendingCount > 0 ? `(${pendingCount})` : ''}`} highlight={pendingCount > 0} />
                 </div>
 
-                {/* ITEM EXCLUSIVO MASTER */}
+                {/* ITEM EXCLUSIVO MASTER (VISÃO GERAL) */}
+                {/* Desaparece quando você entra na loja (isImpersonating=true torna user.role='Gerente') */}
                 {isMaster && (
-                    <div className="mb-4">
-                      <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-wider mb-2 pl-2">Admin</p>
-                      <NavItem to="/master-admin" icon={<Crown size={20} className="text-amber-400"/>} label="Painel Master" />
+                    <div className="mb-4 animate-fade-in">
+                      <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-wider mb-2 pl-2">Admin Global</p>
+                      {/* Ajustado para a rota correta do MasterDashboard */}
+                      <NavItem to="/master-dashboard" icon={<Crown size={20} className="text-amber-400"/>} label="Painel Master" />
                     </div>
                 )}
 
@@ -114,7 +146,7 @@ export function AppLayout() {
 
         <div className="p-4 border-t border-slate-800">
           <button onClick={signOut} className="flex items-center w-full px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-slate-800 rounded-lg transition-colors">
-            <LogOut size={18} className="mr-2" /> Sair da Conta
+            <LogOut size={18} className="mr-2" /> {isImpersonating ? 'Sair (Logout)' : 'Sair da Conta'}
           </button>
         </div>
       </aside>
