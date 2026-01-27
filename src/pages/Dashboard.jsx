@@ -66,13 +66,34 @@ export default function Dashboard() {
     try {
       if (loading) setLoading(true)
       
+      // --- CORREÇÃO DO ERRO 400 (UUID vs ID Numérico) ---
       let companyId = null;
-      if (String(user.id) === '10') companyId = 1; 
-      else {
-          const { data: emp } = await supabase.from('employees').select('company_id').eq('auth_user_id', user.id).maybeSingle();
+      const userIdStr = String(user.id);
+      
+      // Verifica se é ID numérico (ex: '19') ou UUID
+      const isNumericId = /^\d+$/.test(userIdStr);
+
+      if (userIdStr === '10') {
+          companyId = 1; // Master hardcoded
+      } else {
+          // Se for numérico, busca pela coluna 'id'. Se for UUID, busca por 'auth_user_id'
+          const searchCol = isNumericId ? 'id' : 'auth_user_id';
+          
+          const { data: emp } = await supabase
+            .from('employees')
+            .select('company_id')
+            .eq(searchCol, userIdStr)
+            .maybeSingle();
+            
           companyId = emp?.company_id || user.user_metadata?.company_id;
       }
-      if (!companyId) return;
+
+      if (!companyId) {
+          console.warn("Empresa não identificada para o usuário", userIdStr);
+          setLoading(false);
+          return;
+      }
+      // ----------------------------------------------------
 
       const start = `${dateRange.start}T00:00:00`
       const end = `${dateRange.end}T23:59:59`
@@ -164,7 +185,7 @@ export default function Dashboard() {
               s.sale_items.forEach(item => {
                   const name = item.product_name || 'Item sem nome';
                   const itemVal = Number(item.total) || 0;
-                  const itemQty = Number(item.quantity) || 0; // Captura Quantidade
+                  const itemQty = Number(item.quantity) || 0; 
 
                   if (!prodMap[name]) {
                       prodMap[name] = { total: 0, quantity: 0 };
@@ -231,7 +252,6 @@ export default function Dashboard() {
         }),
         paymentMethods: Object.keys(payMap).map(k => ({ name: k, value: payMap[k] })).sort((a,b) => b.value - a.value),
         
-        // Mapeia tanto o total quanto a quantidade
         topProducts: Object.entries(prodMap)
             .map(([name, data]) => ({ name, total: data.total, quantity: data.quantity }))
             .sort((a,b) => b.total - a.total)
@@ -277,29 +297,47 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6 max-w-[1920px] mx-auto min-h-screen flex flex-col">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-sm text-slate-500">Visão Geral & Financeira</p>
+    <div className="p-3 md:p-6 max-w-[1920px] mx-auto min-h-screen flex flex-col pb-24 md:pb-6">
+      
+      {/* HEADER RESPONSIVO */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 md:mb-6 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="w-full xl:w-auto">
+          <h1 className="text-xl md:text-2xl font-bold text-slate-800">Dashboard</h1>
+          <p className="text-xs md:text-sm text-slate-500">Visão Geral & Financeira</p>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1 rounded-lg">
-                <div className="flex items-center gap-2 px-2 border-r border-slate-200">
+        {/* Barra de Ferramentas - Full width no mobile */}
+        <div className="flex flex-col md:flex-row flex-wrap items-stretch md:items-center gap-3 w-full xl:w-auto">
+            {/* Filtro de Data Flexível */}
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 rounded-lg w-full md:w-auto justify-between md:justify-start">
+                <div className="flex items-center gap-2 px-2 border-r border-slate-200 shrink-0">
                     <Filter size={16} className="text-slate-400"/>
-                    <span className="text-xs font-bold text-slate-600">FILTRO</span>
+                    <span className="text-[10px] md:text-xs font-bold text-slate-600 uppercase">Filtro</span>
                 </div>
-                <input type="date" value={dateRange.start} onChange={e => setDateRange(p => ({...p, start: e.target.value}))} className="bg-transparent text-sm outline-none w-32"/>
-                <span className="text-slate-400">até</span>
-                <input type="date" value={dateRange.end} onChange={e => setDateRange(p => ({...p, end: e.target.value}))} className="bg-transparent text-sm outline-none w-32"/>
+                <input 
+                  type="date" 
+                  value={dateRange.start} 
+                  onChange={e => setDateRange(p => ({...p, start: e.target.value}))} 
+                  className="bg-transparent text-xs md:text-sm outline-none flex-1 min-w-0 text-center"
+                />
+                <span className="text-slate-400 text-xs shrink-0">até</span>
+                <input 
+                  type="date" 
+                  value={dateRange.end} 
+                  onChange={e => setDateRange(p => ({...p, end: e.target.value}))} 
+                  className="bg-transparent text-xs md:text-sm outline-none flex-1 min-w-0 text-center"
+                />
             </div>
 
-            <button onClick={fetchMetrics} className="p-2 hover:bg-slate-100 rounded-lg"><RefreshCw size={20} className={loading ? "animate-spin" : ""}/></button>
-            <button onClick={() => isEditing ? handleSaveLayout() : setIsEditing(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold ${isEditing ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-900 text-white'}`}>
-                {isEditing ? <Save size={18}/> : <Settings size={18}/>}
-                {isEditing ? 'Salvar' : 'Personalizar'}
-            </button>
+            <div className="grid grid-cols-2 md:flex gap-2 w-full md:w-auto">
+                <button onClick={fetchMetrics} className="p-2.5 hover:bg-slate-100 rounded-lg border border-slate-200 md:border-transparent flex justify-center items-center bg-white md:bg-transparent shadow-sm md:shadow-none active:scale-95 transition-all">
+                    <RefreshCw size={20} className={loading ? "animate-spin" : ""}/>
+                </button>
+                <button onClick={() => isEditing ? handleSaveLayout() : setIsEditing(true)} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold shadow-sm active:scale-95 transition-all ${isEditing ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-900 text-white'}`}>
+                    {isEditing ? <Save size={18}/> : <Settings size={18}/>}
+                    {isEditing ? 'Salvar' : 'Personalizar'}
+                </button>
+            </div>
         </div>
       </div>
 
@@ -309,22 +347,22 @@ export default function Dashboard() {
               <h3 className="w-full font-bold text-indigo-900 mb-2 flex items-center gap-2"><LayoutGrid size={18}/> Adicionar Widgets</h3>
               {Object.keys(WIDGET_REGISTRY).map(id => (
                  !items.includes(id) && (
-                    <button key={id} onClick={() => setItems([...items, id])} className="bg-white border px-3 py-2 rounded text-sm hover:text-indigo-600 flex items-center gap-2">
+                    <button key={id} onClick={() => setItems([...items, id])} className="bg-white border px-3 py-2 rounded text-sm hover:text-indigo-600 flex items-center gap-2 shadow-sm">
                         <Plus size={16}/> {WIDGET_REGISTRY[id].label}
                     </button>
                  )
               ))}
-              <button onClick={() => {if(confirm('Resetar layout?')) setItems(DEFAULT_LAYOUT)}} className="ml-auto text-xs text-red-600 flex items-center gap-1 hover:underline"><RotateCcw size={12}/> Resetar Padrão</button>
+              <button onClick={() => {if(confirm('Resetar layout?')) setItems(DEFAULT_LAYOUT)}} className="ml-auto text-xs text-red-600 flex items-center gap-1 hover:underline p-2"><RotateCcw size={12}/> Resetar Padrão</button>
            </div>
         </div>
       )}
 
       {loading && !metrics.todayRevenue && !metrics.lowStockCount ? (
-         <div className="flex-1 flex items-center justify-center text-slate-400 gap-2"><Loader2 className="animate-spin"/> Carregando...</div>
+         <div className="flex-1 flex items-center justify-center text-slate-400 gap-2 min-h-[300px]"><Loader2 className="animate-spin"/> Carregando...</div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={items} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pb-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pb-10">
                 {items.map(id => {
                     const WidgetConfig = WIDGET_REGISTRY[id]
                     if (!WidgetConfig) return null

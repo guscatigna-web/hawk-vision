@@ -86,10 +86,14 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+    // AJUSTE MOBILE: 
+    // 1. 'items-start' e 'pt-4' no mobile -> Fixa no topo com respiro
+    // 2. 'md:items-center' e 'md:pt-0' -> Centraliza no Desktop
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start md:items-center justify-center z-50 p-2 md:p-4 pt-4 md:pt-0 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[95vh] md:max-h-[90vh]">
         
-        <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50">
+        {/* HEADER */}
+        <div className="flex justify-between items-center p-4 md:p-5 border-b border-gray-100 bg-gray-50 shrink-0">
           <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
             {isPositive ? <CheckCircle className="text-green-600" size={20}/> : 
              isSevere ? <AlertTriangle className="text-red-600" size={20}/> : 
@@ -101,11 +105,12 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
           </button>
         </div>
 
-        <div className="p-6 space-y-5 overflow-y-auto">
+        {/* BODY */}
+        <div className="p-4 md:p-6 space-y-4 md:space-y-5 overflow-y-auto custom-scrollbar">
           
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Colaborador</label>
-            <div className="font-bold text-gray-800 text-lg">{employeeName}</div>
+            <div className="font-bold text-gray-800 text-lg leading-tight">{employeeName}</div>
           </div>
 
           <div>
@@ -113,7 +118,7 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
             <select
               value={type}
               onChange={(e) => setType(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-white transition-all"
+              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-white transition-all text-sm md:text-base"
             >
               <optgroup label="Positivo">
                 <option value="elogio">🌟 Elogio / Bom Desempenho</option>
@@ -142,9 +147,9 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
                   value={dateFact}
                   max={new Date().toISOString().split("T")[0]}
                   onChange={(e) => setDateFact(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg p-2.5 pl-10 outline-none focus:border-blue-500"
+                  className="w-full border border-gray-300 rounded-lg p-2.5 pl-10 outline-none focus:border-blue-500 text-sm md:text-base"
                 />
-                <Calendar className="absolute left-3 top-3 text-gray-400" size={16} />
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
               </div>
             </div>
             
@@ -157,9 +162,9 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="Ex: Loja Matriz"
-                    className="w-full border border-gray-300 rounded-lg p-2.5 pl-10 outline-none focus:border-blue-500"
+                    className="w-full border border-gray-300 rounded-lg p-2.5 pl-10 outline-none focus:border-blue-500 text-sm md:text-base"
                   />
-                  <MapPin className="absolute left-3 top-3 text-gray-400" size={16} />
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                 </div>
             </div>
           </div>
@@ -172,7 +177,7 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
               rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm md:text-base"
               placeholder={
                 isPositive ? "Ex: Demonstrou proatividade no atendimento..." :
                 type === 'atraso' ? "Ex: Chegou 30min atrasado sem aviso prévio..." :
@@ -192,17 +197,17 @@ export function NewOccurrenceModal({ isOpen, onClose, employeeName, companyConfi
 
         </div>
 
-        <div className="p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50">
+        <div className="p-4 md:p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 shrink-0">
           <button 
             onClick={handleClose} 
-            className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            className="px-4 md:px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             Cancelar
           </button>
           <button 
             onClick={handleSave} 
             disabled={isSubmitting}
-            className={`px-5 py-2.5 text-sm font-bold text-white rounded-lg shadow-sm transition-all active:scale-95 ${getThemeColor()}`}
+            className={`px-4 md:px-5 py-2.5 text-sm font-bold text-white rounded-lg shadow-sm transition-all active:scale-95 ${getThemeColor()}`}
           >
             {isSubmitting ? 'Salvando...' : (isSevere ? 'Registrar Ocorrência' : 'Salvar Registro')}
           </button>

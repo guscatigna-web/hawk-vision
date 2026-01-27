@@ -122,38 +122,42 @@ export function Bar() {
   if (loading) return <div className="flex h-screen items-center justify-center text-slate-500">Carregando Bar...</div>
 
   return (
-    <div className="h-[calc(100vh-2rem)] flex flex-col gap-4">
+    // AJUSTE MOBILE: h-[calc(100dvh-5rem)] e pb-20
+    <div className="h-[calc(100dvh-5rem)] md:h-[calc(100vh-2rem)] flex flex-col gap-3 md:gap-4 pb-20 md:pb-0">
       
-      <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-3 md:p-4 rounded-xl border border-slate-100 shadow-sm gap-3">
         <div className="flex items-center gap-3">
           <div className="bg-purple-100 p-2 rounded-lg text-purple-600">
-            <Beer size={28} />
+            <Beer size={24} className="md:w-7 md:h-7" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">KDS Bar / Copa</h1>
-            <p className="text-sm text-slate-500">Tempo Alerta: {alertTime} min</p>
+            <h1 className="text-xl md:text-2xl font-bold text-slate-800">KDS Bar / Copa</h1>
+            <p className="text-xs md:text-sm text-slate-500">Tempo Alerta: {alertTime} min</p>
           </div>
         </div>
-        <div className="flex gap-4 text-sm font-bold">
-            <div className="flex items-center gap-2 text-slate-500">
-                <span className="w-3 h-3 rounded-full bg-blue-500"></span> Pendentes: {pendingOrders.length}
+        
+        {/* Badges alinhados */}
+        <div className="grid grid-cols-2 gap-3 w-full md:w-auto text-sm font-bold">
+            <div className="flex items-center justify-center md:justify-start gap-2 text-slate-600 bg-slate-50 md:bg-transparent p-2 md:p-0 rounded-lg">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Pendentes: {pendingOrders.length}
             </div>
-            <div className="flex items-center gap-2 text-slate-500">
-                <span className="w-3 h-3 rounded-full bg-purple-500"></span> Preparando: {preparingOrders.length}
+            <div className="flex items-center justify-center md:justify-start gap-2 text-slate-600 bg-slate-50 md:bg-transparent p-2 md:p-0 rounded-lg">
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span> Preparando: {preparingOrders.length}
             </div>
         </div>
       </div>
 
-      {/* SCROLL FIX: min-h-0 */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-slate-200/50 p-4 rounded-xl flex flex-col h-full overflow-hidden">
-          <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2 sticky top-0">
-            <AlertCircle className="text-blue-600"/> Fila de Entrada
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+        
+        {/* COLUNA 1: PENDENTES */}
+        <div className="bg-slate-200/50 p-3 md:p-4 rounded-xl flex flex-col h-full overflow-hidden border border-slate-300/50">
+          <h2 className="text-base md:text-lg font-bold text-slate-700 mb-3 flex items-center gap-2 sticky top-0">
+            <AlertCircle className="text-blue-600" size={20}/> Fila de Entrada
           </h2>
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1 md:pr-2 custom-scrollbar">
             {pendingOrders.length === 0 && (
-                <div className="h-40 flex items-center justify-center text-slate-400 italic border-2 border-dashed border-slate-300 rounded-lg">
-                    Sem pedidos no bar
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 italic border-2 border-dashed border-slate-300 rounded-lg p-4 text-center text-sm">
+                    <AlertCircle className="mb-2 opacity-50"/> Sem pedidos no bar
                 </div>
             )}
             {pendingOrders.map(order => (
@@ -161,26 +165,27 @@ export function Bar() {
                 key={order.id} 
                 order={order} 
                 items={order.barItems} 
-                startTime={order.batchTime} // Passa tempo dos itens
+                startTime={order.batchTime} 
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'preparing')} 
                 actionLabel="Preparar" 
-                actionIcon={<Play size={18}/>} 
+                actionIcon={<Play size={16}/>} 
                 baseColor="blue" 
               />
             ))}
           </div>
         </div>
 
-        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col h-full overflow-hidden">
-          <h2 className="text-lg font-bold text-purple-800 mb-4 flex items-center gap-2 sticky top-0">
-            <Beer className="text-purple-600"/> Preparando
+        {/* COLUNA 2: PREPARANDO */}
+        <div className="bg-purple-50 p-3 md:p-4 rounded-xl border border-purple-100 flex flex-col h-full overflow-hidden">
+          <h2 className="text-base md:text-lg font-bold text-purple-800 mb-3 flex items-center gap-2 sticky top-0">
+            <Beer className="text-purple-600" size={20}/> Preparando
           </h2>
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1 md:pr-2 custom-scrollbar">
             {preparingOrders.length === 0 && (
-                <div className="h-40 flex items-center justify-center text-purple-300 italic border-2 border-dashed border-purple-200 rounded-lg">
-                    Nenhum drink sendo feito
+                <div className="h-full flex flex-col items-center justify-center text-purple-300 italic border-2 border-dashed border-purple-200 rounded-lg p-4 text-center text-sm">
+                    <Beer className="mb-2 opacity-50"/> Nenhum drink sendo feito
                 </div>
             )}
             {preparingOrders.map(order => (
@@ -188,12 +193,12 @@ export function Bar() {
                 key={order.id} 
                 order={order} 
                 items={order.barItems} 
-                startTime={order.batchTime} // Passa tempo dos itens
+                startTime={order.batchTime} 
                 getWaitTime={getWaitTime} 
                 alertTime={alertTime}
                 onAction={(ids) => updateBatchStatus(ids, 'ready')} 
                 actionLabel="Pronto" 
-                actionIcon={<CheckCircle size={18}/>} 
+                actionIcon={<CheckCircle size={16}/>} 
                 baseColor="purple" 
               />
             ))}
@@ -233,32 +238,32 @@ function BarOrderCard({ order, items, startTime, getWaitTime, alertTime, onActio
     const btnColor = baseColor === 'blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
 
     return (
-        <div className={`p-4 rounded-lg shadow-sm border-l-4 ${s.borderClass} ${s.bgClass} transition-colors duration-500`}>
-            <div className="flex justify-between items-start mb-3 border-b border-black/5 pb-2">
+        <div className={`p-3 md:p-4 rounded-lg shadow-sm border-l-4 ${s.borderClass} ${s.bgClass} transition-colors duration-500`}>
+            <div className="flex justify-between items-start mb-2 md:mb-3 border-b border-black/5 pb-2">
                 <div>
-                    <h3 className={`text-xl font-bold flex items-center gap-2 ${s.textClass}`}>
+                    <h3 className={`text-base md:text-xl font-bold flex items-center gap-2 ${s.textClass}`}>
                       {order.customer_name}
                       {order.status === 'concluido' && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded uppercase">Pago</span>}
                     </h3>
-                    <p className="text-xs opacity-60">Pedido #{order.id.toString().slice(0,4)}</p>
+                    <p className="text-[10px] md:text-xs opacity-60">Pedido #{order.id.toString().slice(0,4)}</p>
                 </div>
-                <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs ${s.badgeClass}`}>
+                <div className={`flex items-center gap-1 font-bold px-2 py-1 rounded text-xs whitespace-nowrap ${s.badgeClass}`}>
                     <Clock size={12} /> {mins} min
                 </div>
             </div>
 
-            <ul className="space-y-2 mb-4">
+            <ul className="space-y-1 mb-3">
                 {items.map((item, idx) => (
                     <li key={idx} className={`flex justify-between text-sm border-b border-black/5 pb-1 last:border-0 ${s.textClass}`}>
-                        <span className="uppercase font-medium">{item.product?.name}</span>
-                        <span className="font-bold bg-black/5 px-2 rounded">{item.quantity}</span>
+                        <span className="uppercase font-medium flex-1">{item.product?.name}</span>
+                        <span className="font-bold bg-black/5 px-2 rounded ml-2">{item.quantity}</span>
                     </li>
                 ))}
             </ul>
 
             <button 
                 onClick={() => onAction(itemIds)} 
-                className={`w-full py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 active:scale-95 transition-all ${btnColor}`}
+                className={`w-full py-2.5 md:py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 active:scale-95 transition-all text-sm md:text-base ${btnColor}`}
             >
                 {actionIcon} {actionLabel}
             </button>

@@ -16,10 +16,10 @@ import {
   AlertTriangle, 
   FileText, 
   Trash2, 
-  XCircle,
-  ShieldAlert,
-  Search,
-  Eye
+  XCircle, 
+  ShieldAlert, 
+  Search, 
+  Eye 
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
@@ -33,7 +33,7 @@ export function Relatorios() {
   const [currentView, setCurrentView] = useState('menu') 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20 md:pb-6">
       {currentView === 'menu' && (
         <ReportsMenu onSelect={setCurrentView} />
       )}
@@ -50,7 +50,6 @@ export function Relatorios() {
         <SalesHistoryReport onBack={() => setCurrentView('menu')} />
       )}
 
-      {/* NOVA TELA DE LOGS */}
       {currentView === 'auditoria_logs' && (
         <AuditLogsReport onBack={() => setCurrentView('menu')} />
       )}
@@ -60,15 +59,15 @@ export function Relatorios() {
 
 function ReportsMenu({ onSelect }) {
   return (
-    <div className="animate-fade-in no-print">
+    <div className="animate-fade-in no-print px-1">
       <h2 className="text-2xl font-bold text-slate-800 mb-2">Central de Relatórios</h2>
-      <p className="text-sm text-slate-500 mb-8">Selecione o tipo de relatório que deseja visualizar.</p>
+      <p className="text-sm text-slate-500 mb-6">Selecione o tipo de relatório que deseja visualizar.</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         
         <button 
           onClick={() => onSelect('historico_vendas')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-violet-300 transition-all text-left group h-full flex flex-col"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-violet-300 transition-all text-left group h-full flex flex-col active:scale-95 duration-100"
         >
           <div className="bg-violet-50 w-12 h-12 rounded-lg flex items-center justify-center text-violet-600 mb-4 group-hover:scale-110 transition-transform">
             <History size={24} />
@@ -81,7 +80,7 @@ function ReportsMenu({ onSelect }) {
 
         <button 
           onClick={() => onSelect('movimentacoes')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-300 transition-all text-left group h-full flex flex-col"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-300 transition-all text-left group h-full flex flex-col active:scale-95 duration-100"
         >
           <div className="bg-blue-50 w-12 h-12 rounded-lg flex items-center justify-center text-blue-600 mb-4 group-hover:scale-110 transition-transform">
             <ArrowRightLeft size={24} />
@@ -94,7 +93,7 @@ function ReportsMenu({ onSelect }) {
 
         <button 
           onClick={() => onSelect('inventario')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-amber-300 transition-all text-left group h-full flex flex-col"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-amber-300 transition-all text-left group h-full flex flex-col active:scale-95 duration-100"
         >
           <div className="bg-amber-50 w-12 h-12 rounded-lg flex items-center justify-center text-amber-600 mb-4 group-hover:scale-110 transition-transform">
             <ClipboardList size={24} />
@@ -108,7 +107,7 @@ function ReportsMenu({ onSelect }) {
         {/* NOVO CARD LGPD */}
         <button 
           onClick={() => onSelect('auditoria_logs')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-slate-400 transition-all text-left group h-full flex flex-col"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-slate-400 transition-all text-left group h-full flex flex-col active:scale-95 duration-100"
         >
           <div className="bg-slate-100 w-12 h-12 rounded-lg flex items-center justify-center text-slate-600 mb-4 group-hover:scale-110 transition-transform">
             <ShieldAlert size={24} />
@@ -214,11 +213,11 @@ function AuditLogsReport({ onBack }) {
             </div>
 
             {/* Filtros */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-wrap gap-4">
-                <div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col md:flex-row flex-wrap gap-4">
+                <div className="flex-1 min-w-[200px]">
                     <label className="text-xs font-bold text-slate-500 block mb-1">Tabela</label>
                     <select 
-                        className="p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
                         value={filters.table}
                         onChange={e => setFilters({...filters, table: e.target.value})}
                     >
@@ -229,10 +228,10 @@ function AuditLogsReport({ onBack }) {
                         <option value="company_settings">Dados Empresa</option>
                     </select>
                 </div>
-                <div>
+                <div className="flex-1 min-w-[200px]">
                     <label className="text-xs font-bold text-slate-500 block mb-1">Operação</label>
                     <select 
-                        className="p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full p-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
                         value={filters.operation}
                         onChange={e => setFilters({...filters, operation: e.target.value})}
                     >
@@ -242,14 +241,14 @@ function AuditLogsReport({ onBack }) {
                         <option value="DELETE">Exclusão (DELETE)</option>
                     </select>
                 </div>
-                <button onClick={fetchLogs} className="self-end px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-900 transition-colors">
+                <button onClick={fetchLogs} className="self-end px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-900 transition-colors h-[38px] mt-auto w-full md:w-auto">
                     <Search size={16} className="inline mr-2"/> Filtrar
                 </button>
             </div>
 
-            {/* Tabela */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                <table className="w-full text-left">
+            {/* Tabela com Scroll Horizontal */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
+                <table className="w-full text-left whitespace-nowrap">
                     <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold">
                         <tr>
                             <th className="p-4">Data/Hora</th>
@@ -481,8 +480,8 @@ function SalesHistoryReport({ onBack }) {
         <h2 className="text-xl font-bold text-slate-800">Histórico de Vendas & Fiscal</h2>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-        <table className="w-full text-left border-collapse">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
+        <table className="w-full text-left border-collapse whitespace-nowrap">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold">
             <tr>
               <th className="px-6 py-4">Data/Hora</th>
@@ -656,8 +655,8 @@ function MovementsReport({ onBack }) {
   }
 
   const ReportContent = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden print:shadow-none print:border-none print:w-full">
-        <table className="w-full text-left border-collapse">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto print:shadow-none print:border-none print:w-full">
+        <table className="w-full text-left border-collapse whitespace-nowrap">
         <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold">
             <tr>
             <th className="px-6 py-4 border-b">Data</th>
@@ -709,18 +708,18 @@ function MovementsReport({ onBack }) {
         </PrintPortal>
       )}
 
-      <div className="flex items-center justify-between no-print">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
             <ArrowLeft size={20} />
           </button>
           <h2 className="text-xl font-bold text-slate-800">Extrato de Movimentações</h2>
         </div>
-        <div className="flex gap-2">
-           <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+        <div className="flex gap-2 w-full md:w-auto">
+           <button onClick={handlePrint} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
              <Printer size={18} /> <span className="hidden sm:inline">Imprimir</span>
            </button>
-           <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 text-green-700 bg-white border border-green-200 rounded-lg hover:bg-green-50">
+           <button onClick={handleExport} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 text-green-700 bg-white border border-green-200 rounded-lg hover:bg-green-50">
              <FileSpreadsheet size={18} /> <span className="hidden sm:inline">Excel</span>
            </button>
         </div>
@@ -730,11 +729,11 @@ function MovementsReport({ onBack }) {
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">De:</label>
-            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={filters.startDate} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))}/>
+            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white" value={filters.startDate} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))}/>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Até:</label>
-            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={filters.endDate} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))}/>
+            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white" value={filters.endDate} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))}/>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Tipo:</label>
@@ -842,8 +841,8 @@ function InventoryAuditReport({ onBack }) {
   }
 
   const ReportContent = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden print:shadow-none print:border-none print:w-full">
-        <table className="w-full text-left border-collapse">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto print:shadow-none print:border-none print:w-full">
+        <table className="w-full text-left border-collapse whitespace-nowrap">
         <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold">
             <tr>
             <th className="px-6 py-4 border-b">Data Aprov.</th>
@@ -904,7 +903,7 @@ function InventoryAuditReport({ onBack }) {
         </PrintPortal>
       )}
 
-      <div className="flex items-center justify-between no-print">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><ArrowLeft size={20} /></button>
           <div>
@@ -912,11 +911,11 @@ function InventoryAuditReport({ onBack }) {
             <p className="text-xs text-slate-500">Histórico de balanços aprovados.</p>
           </div>
         </div>
-        <div className="flex gap-2">
-           <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+        <div className="flex gap-2 w-full md:w-auto">
+           <button onClick={handlePrint} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
              <Printer size={18} /> <span className="hidden sm:inline">Imprimir</span>
            </button>
-           <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 text-green-700 bg-white border border-green-200 rounded-lg hover:bg-green-50">
+           <button onClick={handleExport} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 text-green-700 bg-white border border-green-200 rounded-lg hover:bg-green-50">
              <FileSpreadsheet size={18} /> <span className="hidden sm:inline">Excel</span>
            </button>
         </div>
@@ -926,11 +925,11 @@ function InventoryAuditReport({ onBack }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg">
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">De:</label>
-            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={filters.startDate} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))}/>
+            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white" value={filters.startDate} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))}/>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Até:</label>
-            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={filters.endDate} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))}/>
+            <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white" value={filters.endDate} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))}/>
           </div>
         </div>
       </div>

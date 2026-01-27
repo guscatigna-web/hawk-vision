@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, QrCode, Loader2, ScanBarcode, ChefHat, Receipt, ArrowLeft, Printer, Monitor, FileText, User, Tag, Wallet, X, Check, Settings, Utensils, Zap } from 'lucide-react'
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, QrCode, Loader2, ScanBarcode, ChefHat, Receipt, ArrowLeft, Printer, Monitor, FileText, User, Tag, Wallet, X, Check, Settings, Utensils, Zap, ChevronLeft, ChevronUp } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useCashier } from '../contexts/CashierContext'
@@ -27,6 +27,10 @@ export function Vendas() {
   const saleIdParam = searchParams.get('saleId')
   const isRestaurantMode = !!tableNumberParam
   
+  // --- STATE MOBILE ---
+  // Controls toggling between Product List and Cart on mobile
+  const [mobileView, setMobileView] = useState('products') // 'products' | 'cart'
+
   // --- CONFIGURAÇÕES DE FLUXO ---
   const [useKDS, setUseKDS] = useState(() => localStorage.getItem('hawk_use_kds') === 'true')
   const [autoDeliver, setAutoDeliver] = useState(() => {
@@ -90,7 +94,7 @@ export function Vendas() {
   const [existingItems, setExistingItems] = useState([]) 
   const [existingTotal, setExistingTotal] = useState(0)
   const [currentSaleId, setCurrentSaleId] = useState(saleIdParam || null)
-  const [currentSale, setCurrentSale] = useState(null) // <--- ESTADO PARA DADOS DA VENDA (PAX)
+  const [currentSale, setCurrentSale] = useState(null)
 
   const [customerName, setCustomerName] = useState('')
   const [customerDoc, setCustomerDoc] = useState('')
@@ -151,7 +155,6 @@ export function Vendas() {
     setExistingTotal(total)
     
     if (saleId) {
-        // Busca também os dados da venda pai (para pegar people_count)
         const { data: saleData } = await supabase.from('sales').select('*').eq('id', saleId).single()
         setCurrentSale(saleData)
         fetchPayments(saleId)
@@ -181,6 +184,8 @@ export function Vendas() {
       if (existing) return prev.map(item => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item)
       return [...prev, { product, quantity: 1 }]
     })
+    // Opcional: Feedback visual ou vibração no mobile
+    if (navigator.vibrate) navigator.vibrate(50) 
   }
 
   const updateQuantity = (pid, delta) => {
@@ -235,7 +240,6 @@ export function Vendas() {
             } else if (dest === 'cozinha') {
                 kitchenItems.push(item);
             } else {
-                // Fallback por palavra-chave
                 if (name.includes('cerveja') || name.includes('refrigerante') || name.includes('suco') || name.includes('drink') || name.includes('lata')) {
                     barItems.push(item);
                 } else {
@@ -251,7 +255,6 @@ export function Vendas() {
         } catch (error) {
             console.error("Erro QZ Kitchen:", error);
             toast.error("QZ Offline. Usando Janela.");
-            // Fallback
             setPrintType('kitchen');
             setPrintData(data);
             setPrintTrigger(prev => prev + 1);
@@ -264,7 +267,6 @@ export function Vendas() {
         } catch (error) {
             console.error("Erro QZ Receipt:", error);
             toast.error("QZ Offline. Usando Janela.");
-            // Fallback
             setPrintType(type);
             setPrintData(data);
             setPrintTrigger(prev => prev + 1);
@@ -272,12 +274,10 @@ export function Vendas() {
     }
   }
 
-  // --- PRÉ-CONTA ATUALIZADA (Layout ERP) ---
   const handlePrintPreBill = () => {
     const allItems = [...existingItems, ...cart] 
     if (allItems.length === 0) return toast.error("Nada para imprimir.")
     
-    // Objeto rico para o printer.js
     const data = {
       display_id: currentSaleId ? String(currentSaleId).slice(0,4) : 'NOVO',
       id: currentSaleId || 'Temp',
@@ -285,24 +285,17 @@ export function Vendas() {
       customer_name: customerName || 'Mesa/Cliente',
       table_number: tableNumberParam,
       waiter_name: user?.name || 'Garçom',
-      people_count: currentSale?.people_count || 1, // Envia número de pessoas
-      
-      // Lista de Itens (Sem sujeira)
+      people_count: currentSale?.people_count || 1,
       items: allItems, 
-      sale_items: allItems, // Compatibilidade
-
-      // Totais Discriminados (Para o layout ERP)
+      sale_items: allItems,
       subtotal_value: subtotalRaw,
       service_fee_value: serviceFeeValue,
       discount_value: discountValue,
       total_value: grandTotalFinal
     }
-    
-    // Se for 'prebill', chamamos a função nova
     handlePrint('prebill', data)
   }
 
-  // --- KDS & ENVIO ---
   const handleSendOrder = async () => {
     if (cart.length === 0) return toast.error("Carrinho vazio!")
     if (!currentSession) return toast.error("Abra o caixa antes de lançar!") 
@@ -327,7 +320,6 @@ export function Vendas() {
         setCurrentSaleId(newSale.id)
       }
 
-      // Se usa KDS -> pending. Se impressora -> delivered (ignora tela)
       const initialStatus = useKDS ? 'pending' : 'delivered' 
       const itemsToInsert = cart.map(item => ({
         company_id: companyId,
@@ -360,10 +352,10 @@ export function Vendas() {
       }
       setCart([]) 
       fetchExistingSaleItems(activeId) 
+      setMobileView('products') // Volta para produtos no mobile após enviar
     } catch (error) { console.error(error); toast.error("Erro ao enviar: " + error.message) } finally { setIsProcessing(false) }
   }
 
-  // --- LÓGICA DE PAGAMENTO PERSISTENTE ---
   const handleAddPayment = async (method, amount) => {
     if (!currentSession) return toast.error("Caixa Fechado.")
     if (!companyId) return toast.error("Erro de identificação da empresa. Recarregue.")
@@ -438,7 +430,6 @@ export function Vendas() {
       }
   }
 
-  // --- FINALIZAÇÃO DE VENDA (Atualizado para receber PAX) ---
   const handleFinishSale = async (finalPeopleCount) => {
     if (remainingDue > 0.01) return toast.error(`Ainda faltam R$ ${remainingDue.toFixed(2)}`)
     
@@ -466,7 +457,7 @@ export function Vendas() {
       await supabase.from('sales').update({
         status: 'concluido',
         total: grandTotalFinal,
-        people_count: finalPeopleCount || 1, // <--- ATUALIZA COM O VALOR DO MODAL
+        people_count: finalPeopleCount || 1,
         discount_value: discountValue,
         discount_reason: discount.reason || (discountValue > 0 ? 'Manual' : null),
         customer_name: customerName || 'Varejo',
@@ -538,11 +529,12 @@ export function Vendas() {
     setCart([])
     setExistingItems([])
     setCurrentSaleId(null)
-    setCurrentSale(null) // Limpa venda atual
+    setCurrentSale(null)
     setCustomerName('')
     setCustomerDoc('')
     setPayments([])
     setDiscount({ type: 'fixed', value: 0, reason: '' })
+    setMobileView('products') // Reseta mobile view
     if (isRestaurantMode) navigate('/mesas')
   }
 
@@ -555,8 +547,9 @@ export function Vendas() {
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-600"/></div>
 
   return (
-    <div className="flex h-[calc(100vh-2rem)] gap-6 pb-20 relative">
+    <div className="flex flex-col md:flex-row h-[calc(100vh-4rem)] md:h-[calc(100vh-2rem)] gap-4 md:gap-6 pb-4 md:pb-20 relative overflow-hidden md:overflow-visible">
       
+      {/* Componentes Invisíveis / Modais */}
       {printData && (
         <PrintPortal>
           {printType === 'kitchen' && (
@@ -601,9 +594,9 @@ export function Vendas() {
           discountReason={discount.reason}
           onAddPayment={handleAddPayment}
           onRemovePayment={handleRemovePayment}
-          onFinishSale={handleFinishSale} // Passa a função que recebe (finalPeopleCount)
+          onFinishSale={handleFinishSale} 
           isProcessing={isProcessing}
-          currentPeopleCount={currentSale?.people_count || 1} // Envia valor atual para o modal
+          currentPeopleCount={currentSale?.people_count || 1} 
         />
       )}
 
@@ -616,8 +609,9 @@ export function Vendas() {
         />
       )}
 
-      {/* COLUNA ESQUERDA (CATÁLOGO) */}
-      <div className="flex-1 flex flex-col gap-4">
+      {/* --- COLUNA ESQUERDA (CATÁLOGO DE PRODUTOS) --- */}
+      {/* Mobile: Visível apenas se view === 'products' */}
+      <div className={`flex-1 flex-col gap-4 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
         {isRestaurantMode && (
           <div className="flex items-center justify-between mb-[-10px]">
             <div className="flex items-center gap-2">
@@ -625,11 +619,10 @@ export function Vendas() {
                 <h2 className="text-xl font-bold text-slate-800">Mesa {tableNumberParam}</h2>
             </div>
             
-            <div className="flex gap-2">
+            <div className="hidden md:flex gap-2"> {/* Escondido no mobile para poupar espaço */}
                 <button 
                     onClick={toggleKDSMode} 
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
-                    title="Alternar entre envio para Tela (KDS) ou Impressão"
                 >
                     {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS' : 'Print'}
                 </button>
@@ -637,7 +630,6 @@ export function Vendas() {
                 <button 
                     onClick={toggleAutoDeliver} 
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${autoDeliver ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}
-                    title={autoDeliver ? "Fluxo Restaurante: Pagamento encerra pedido" : "Fluxo Fast-Food: Pagamento mantém pedido na tela"}
                 >
                     {autoDeliver ? <Utensils size={14}/> : <Zap size={14}/>} 
                     {autoDeliver ? 'Restaurante' : 'Fast-Food'}
@@ -646,34 +638,34 @@ export function Vendas() {
           </div>
         )}
 
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col sm:flex-row gap-4">
+        <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col sm:flex-row gap-3 md:gap-4">
           <div className="relative flex-1">
             <ScanBarcode className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
             <input 
               ref={searchInputRef}
-              type="text" placeholder="Bipe ou busque..." 
+              type="text" placeholder="Buscar produto..." 
               value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1 items-center">
-            <button onClick={() => setSelectedCategory('all')} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === 'all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Todos</button>
+          <div className="flex gap-2 overflow-x-auto pb-1 items-center no-scrollbar">
+            <button onClick={() => setSelectedCategory('all')} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${selectedCategory === 'all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Todos</button>
             {categories.map(cat => (
-              <button key={cat.id} onClick={() => setSelectedCategory(cat.id)} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === cat.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{cat.name}</button>
+              <button key={cat.id} onClick={() => setSelectedCategory(cat.id)} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${selectedCategory === cat.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{cat.name}</button>
             ))}
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-2">
-             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="flex-1 overflow-y-auto pr-1 pb-20 md:pb-0">
+             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
               {filteredProducts.map(product => (
-                <button key={product.id} onClick={() => addToCart(product)} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left flex flex-col h-full active:scale-95 duration-100 relative group">
+                <button key={product.id} onClick={() => addToCart(product)} className="bg-white p-3 md:p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left flex flex-col h-full active:scale-95 duration-100 relative group">
                     <div className="flex-1">
-                        <h3 className="font-bold text-slate-700 leading-tight">{product.name}</h3>
-                        <p className="text-xs text-slate-400 mt-1 mb-2">{product.categories?.name}</p>
+                        <h3 className="font-bold text-slate-700 leading-tight text-sm md:text-base">{product.name}</h3>
+                        <p className="text-xs text-slate-400 mt-1 mb-2 truncate">{product.categories?.name}</p>
                     </div>
                     <div className="flex justify-between items-end mt-2">
-                        <span className="font-bold text-slate-800 text-lg">R$ {product.price.toFixed(2)}</span>
+                        <span className="font-bold text-slate-800 text-base md:text-lg">R$ {product.price.toFixed(2)}</span>
                         <div className="bg-blue-50 text-blue-600 p-1.5 rounded-lg group-hover:bg-blue-600 group-hover:text-white transition-colors"><Plus size={16}/></div>
                     </div>
                 </button>
@@ -682,13 +674,20 @@ export function Vendas() {
         </div>
       </div>
 
-      {/* COLUNA DIREITA (CARRINHO) */}
-      <div className="w-96 bg-white rounded-xl shadow-lg border border-slate-100 flex flex-col h-full z-10">
-        <div className={`p-5 border-b border-slate-100 rounded-t-xl flex justify-between items-center ${isRestaurantMode ? 'bg-amber-50' : 'bg-slate-50'}`}>
-             <h2 className={`font-bold flex items-center gap-2 ${isRestaurantMode ? 'text-amber-800' : 'text-slate-800'}`}>
-                {isRestaurantMode ? <Receipt size={20} /> : <ShoppingCart size={20} />} 
-                {isRestaurantMode ? `Comanda` : 'Carrinho'}
-             </h2>
+      {/* --- COLUNA DIREITA (CARRINHO) --- */}
+      {/* Mobile: Visível apenas se view === 'cart'. Ocupa tela cheia. */}
+      <div className={`w-full md:w-96 bg-white rounded-xl shadow-lg border border-slate-100 flex flex-col h-full z-10 ${mobileView === 'products' ? 'hidden md:flex' : 'flex absolute inset-0 md:relative'}`}>
+        <div className={`p-4 md:p-5 border-b border-slate-100 rounded-t-xl flex justify-between items-center ${isRestaurantMode ? 'bg-amber-50' : 'bg-slate-50'}`}>
+             <div className="flex items-center gap-2">
+                {/* Botão voltar no mobile */}
+                <button onClick={() => setMobileView('products')} className="md:hidden p-2 -ml-2 text-slate-500">
+                    <ChevronLeft size={24} />
+                </button>
+                <h2 className={`font-bold flex items-center gap-2 ${isRestaurantMode ? 'text-amber-800' : 'text-slate-800'}`}>
+                    {isRestaurantMode ? <Receipt size={20} /> : <ShoppingCart size={20} />} 
+                    {isRestaurantMode ? `Comanda` : 'Carrinho'}
+                </h2>
+             </div>
              <span className="text-xs font-bold bg-white px-2 py-1 rounded-full border border-slate-200">
                 {isRestaurantMode ? existingItems.length + cart.length : cart.length} itens
              </span>
@@ -727,6 +726,13 @@ export function Vendas() {
                     </div>
                 </div>
             ))}
+            
+            {cart.length === 0 && existingItems.length === 0 && (
+                <div className="text-center py-10 text-slate-400">
+                    <ShoppingCart size={48} className="mx-auto mb-2 opacity-20"/>
+                    <p>Carrinho vazio</p>
+                </div>
+            )}
         </div>
 
         <div className="p-5 border-t border-slate-100 bg-white rounded-b-xl shadow-upper">
@@ -811,16 +817,29 @@ export function Vendas() {
           </div>
         </div>
       </div>
+
+      {/* --- BARRA FLUTUANTE MOBILE (Resumo do Carrinho) --- */}
+      {mobileView === 'products' && (cart.length > 0 || existingItems.length > 0) && (
+        <div className="md:hidden fixed bottom-16 left-4 right-4 z-40 animate-slide-up">
+            <button 
+                onClick={() => setMobileView('cart')}
+                className="w-full bg-slate-900 text-white p-4 rounded-xl shadow-2xl flex justify-between items-center active:scale-95 transition-all"
+            >
+                <div className="flex items-center gap-3">
+                    <div className="bg-amber-500 text-slate-900 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm">
+                        {cart.length + existingItems.length}
+                    </div>
+                    <span className="font-medium text-sm">Ver Carrinho</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold">R$ {grandTotalFinal.toFixed(2)}</span>
+                    <ChevronUp size={20} />
+                </div>
+            </button>
+        </div>
+      )}
+
       <CashierControl />
     </div>
-  )
-}
-
-function PaymentMethodBtn({ icon, label, onClick, color }) {
-  return (
-    <button onClick={onClick} className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 ${color}`}>
-      <div className="mb-1 scale-125">{icon}</div>
-      <span className="font-bold text-xs uppercase">{label}</span>
-    </button>
   )
 }

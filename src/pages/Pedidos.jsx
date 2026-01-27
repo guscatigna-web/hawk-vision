@@ -24,6 +24,9 @@ export default function Pedidos() {
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [orderToCancel, setOrderToCancel] = useState(null)
   
+  // Estado para Abas Mobile (Padrão: pending)
+  const [mobileTab, setMobileTab] = useState('pending')
+  
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [cashierStatus, setCashierStatus] = useState('checking')
   const [errorMsg, setErrorMsg] = useState(null)
@@ -51,10 +54,10 @@ export default function Pedidos() {
   const settingsFetched = useRef(false) 
 
   const columns = {
-    pending: { label: '🔔 Pendentes', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
-    preparing: { label: '👨‍🍳 Em Preparo', color: 'bg-blue-100 border-blue-300 text-blue-800' },
-    delivery: { label: '🛵 Em Entrega', color: 'bg-indigo-100 border-indigo-300 text-indigo-800' },
-    completed: { label: '✅ Concluídos', color: 'bg-green-100 border-green-300 text-green-800' }
+    pending: { label: 'Pendentes', icon: '🔔', color: 'bg-yellow-100 border-yellow-300 text-yellow-800', btn: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
+    preparing: { label: 'Preparo', icon: '👨‍🍳', color: 'bg-blue-100 border-blue-300 text-blue-800', btn: 'bg-blue-100 text-blue-800 border-blue-300' },
+    delivery: { label: 'Entrega', icon: '🛵', color: 'bg-indigo-100 border-indigo-300 text-indigo-800', btn: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
+    completed: { label: 'Concluídos', icon: '✅', color: 'bg-green-100 border-green-300 text-green-800', btn: 'bg-green-100 text-green-800 border-green-300' }
   }
 
   // Effect para Sincronizar KDS/Impressora entre abas
@@ -418,59 +421,88 @@ export default function Pedidos() {
   if (cashierStatus === 'closed') return <div className="h-full flex flex-col items-center justify-center text-slate-400"><Ban size={64} className="mb-4"/><p>Caixa Fechado</p></div>
 
   return (
-    <div className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
+    // AJUSTE MOBILE: h-[calc(100dvh-5rem)] para usar Viewport dinâmico e pb-20 para barra inferior
+    <div className="h-[calc(100dvh-5rem)] md:h-[calc(100vh-4rem)] overflow-hidden flex flex-col pb-20 md:pb-0">
       {printData && (
         <div className="hidden">
              <KitchenTicket tickets={printData.tickets} orderInfo={printData.orderInfo} date={printData.date} />
         </div>
       )}
 
-      <div className="flex justify-between items-center mb-6">
+      {/* HEADER RESPONSIVO */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 md:mb-6 gap-3 p-2 md:p-0">
         <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-800">Gerenciador de Pedidos</h1>
-            <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full border border-green-200 flex items-center gap-1"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div> Caixa Aberto</span>
+            <h1 className="text-xl md:text-2xl font-bold text-slate-800">Pedidos</h1>
+            <span className="bg-green-100 text-green-800 text-[10px] md:text-xs px-2 py-0.5 rounded-full border border-green-200 flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div> Caixa Aberto
+            </span>
         </div>
         
-        <div className="flex items-center gap-4">
+        {/* Controles: Grid no mobile para alinhar melhor */}
+        <div className="grid grid-cols-2 md:flex items-center gap-2 w-full md:w-auto">
             <button 
                 onClick={toggleKDSMode} 
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
-                title="Alternar entre envio para Tela (KDS) ou Impressão Física"
+                className={`flex justify-center items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border transition-colors ${useKDS ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-300'}`}
             >
-                {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS Ativo' : 'Impressão Ativa'}
+                {useKDS ? <Monitor size={14}/> : <Printer size={14}/>} {useKDS ? 'KDS' : 'Print'}
             </button>
 
-            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
-                <span className="text-xs font-bold text-slate-600 flex items-center gap-1"><Settings size={14}/> Auto-Aceite:</span>
+            <div className="flex justify-center items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-600 flex items-center gap-1"><Settings size={14}/> Auto:</span>
                 <button 
                     onClick={toggleAutoAccept} 
-                    className={`transition-colors ${autoAcceptInfo.enabled ? 'text-green-600' : 'text-slate-300'}`}
+                    className={`transition-colors flex items-center ${autoAcceptInfo.enabled ? 'text-green-600' : 'text-slate-300'}`}
                     disabled={autoAcceptInfo.loading}
                 >
-                    {autoAcceptInfo.enabled ? <ToggleRight size={32} className="fill-current"/> : <ToggleLeft size={32} className="fill-current"/>}
+                    {autoAcceptInfo.enabled ? <ToggleRight size={24} className="fill-current"/> : <ToggleLeft size={24} className="fill-current"/>}
                 </button>
             </div>
 
-            <div className="flex gap-2 items-center">
-                {!audioEnabled && <button onClick={enableAudio} className="bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2"><Volume2 size={16}/> Ativar Som</button>}
-                
-                {/* INDICADOR DE STATUS DO POLLING */}
-                <div className={`px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2 border transition-all ${isPolling ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-red-100 text-red-800 border-red-200'}`}>
-                    <Bike size={16}/> 
-                    {isPolling ? <RefreshCw size={14} className="animate-spin"/> : 'iFood Online'}
-                </div>
+            <button onClick={enableAudio} className={`col-span-1 md:col-auto bg-slate-200 hover:bg-slate-300 px-3 py-2 rounded-lg text-xs font-bold flex justify-center items-center gap-2 ${audioEnabled ? 'opacity-50' : ''}`}>
+                <Volume2 size={16}/> {audioEnabled ? 'Som OK' : 'Ativar Som'}
+            </button>
+            
+            <div className={`col-span-1 md:col-auto px-3 py-2 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border transition-all ${isPolling ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-red-100 text-red-800 border-red-200'}`}>
+                <Bike size={16}/> 
+                {isPolling ? <RefreshCw size={14} className="animate-spin"/> : 'iFood ON'}
             </div>
         </div>
       </div>
-      <div className="flex-1 overflow-x-auto overflow-y-hidden">
-        <div className="flex gap-4 h-full min-w-[1200px]">
+
+      {/* ABAS DE NAVEGAÇÃO MOBILE */}
+      <div className="flex md:hidden gap-2 overflow-x-auto pb-2 mb-2 px-2 no-scrollbar">
+        {Object.entries(columns).map(([key, col]) => {
+            const count = getColumnOrders(key).length;
+            const isActive = mobileTab === key;
+            return (
+                <button 
+                    key={key} 
+                    onClick={() => setMobileTab(key)}
+                    className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-bold transition-all ${isActive ? col.btn : 'bg-white border-slate-200 text-slate-500'}`}
+                >
+                    <span>{col.icon}</span>
+                    <span>{col.label}</span>
+                    {count > 0 && <span className="bg-white/50 px-1.5 rounded text-[10px]">{count}</span>}
+                </button>
+            )
+        })}
+      </div>
+
+      {/* ÁREA DE COLUNAS */}
+      <div className="flex-1 overflow-x-auto md:overflow-y-hidden px-2 md:px-0">
+        <div className="flex md:gap-4 h-full md:min-w-[1200px]">
           {Object.entries(columns).map(([key, col]) => {
             const ordersInColumn = getColumnOrders(key);
-            if (key === 'pending' && ordersInColumn.length === 0) return null;
+            // Lógica de Exibição: No mobile mostra só a aba ativa. No desktop mostra tudo.
+            const displayClass = (key === mobileTab) ? 'flex' : 'hidden md:flex';
+
             return (
-              <div key={key} className={`flex-1 flex flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
+              <div key={key} className={`${displayClass} flex-1 flex-col rounded-xl border h-full max-h-full ${col.color.split(' ')[0]} ${col.color.replace('text-', 'border-').split(' ')[1]}`}>
                 <div className="p-3 border-b border-black/5 font-bold flex justify-between items-center">
-                  <span className={col.color.split(' ')[2]}>{col.label}</span>
+                  <div className="flex items-center gap-2">
+                      <span className="text-lg">{col.icon}</span>
+                      <span className={col.color.split(' ')[2]}>{col.label}</span>
+                  </div>
                   <span className="bg-white/50 px-2 py-0.5 rounded text-xs text-black/60 font-mono">{ordersInColumn.length}</span>
                 </div>
                 <div className="p-2 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
@@ -546,7 +578,7 @@ function OrderModal({ order, onClose, onInitCancellation }) {
                     <h2 className="font-bold text-lg">Pedido #{displayId}</h2>
                     <button onClick={onClose}><XCircle size={20}/></button>
                 </div>
-                <div className="p-6 max-h-[80vh] overflow-y-auto">
+                <div className="p-6 max-h-[80vh] overflow-y-auto custom-scrollbar">
                     <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100"><h3 className="text-sm font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><MapPin size={16}/> Cliente</h3><p className="font-bold text-slate-800 text-lg">{order.customer_name}</p></div>
                     <h3 className="text-sm font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><Receipt size={16}/> Itens</h3>
                     <div className="space-y-3 mb-6">
